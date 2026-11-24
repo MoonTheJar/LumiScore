@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>环形轨迹小球 · 特效测试台</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%23888' stroke-width='2'/%3E%3Ccircle cx='16' cy='5' r='3.5' fill='%23ff6b35'/%3E%3C/svg%3E">
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: #111111;
+  }
+  #stage {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* ===== 调整区（最朴素样式，仅功能性） ===== */
+  #panel {
+    position: fixed;
+    left: 12px;
+    top: 12px;
+    z-index: 10;
+    padding: 10px 14px;
+    background: rgba(20, 20, 20, 0.85);
+    border: 1px solid #555;
+    color: #fff;
+    font: 13px/1.9 system-ui, sans-serif;
+  }
+  #panel label {
+    display: block;
+    margin: 2px 0;
+    white-space: nowrap;
+  }
+  #panel input[type="range"] {
+    width: 150px;
+    vertical-align: middle;
+    margin: 0 6px;
+  }
+  #panel output {
+    display: inline-block;
+    min-width: 44px;
+    text-align: right;
+    color: #ccc;
+    font-variant-numeric: tabular-nums;
+  }
+  #panel button {
+    background: #333;
+    color: #fff;
+    border: 1px solid #555;
+    padding: 2px 12px;
+    cursor: pointer;
+  }
+  /* ===== 循环进度条（可拖动 seek，显示整圈进度） ===== */
+  #loopBar {
+    display: inline-block;
+    width: 150px;
+    height: 10px;
+    background: #333;
+    border: 1px solid #555;
+    vertical-align: middle;
+    position: relative;
+    cursor: pointer;
+  }
+  #loopFill {
+    display: block;
+    height: 100%;
+    width: 0%;
+    background: #ff8c4a;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<!-- ===== 调整区 ===== -->
+<div id="panel">
+  <label>拖尾长度 <input id="trailLength" type="range" min="0" max="2" step="0.05" value="0.8"><output id="trailLengthVal"></output></label>
+  <label>小球大小 <input id="ballSize" type="range" min="0.4" max="3" step="0.05" value="1"><output id="ballSizeVal"></output></label>
+  <label>发光强度 <input id="bloomStrength" type="range" min="0" max="3" step="0.05" value="1"><output id="bloomStrengthVal"></output></label>
+  <label>光晕扩散半径 <input id="bloomRadius" type="range" min="0" max="1.5" step="0.05" value="0.5"><output id="bloomRadiusVal"></output></label>
+  <label>亮度阈值 <input id="bloomThreshold" type="range" min="0" max="1" step="0.01" value="0.25"><output id="bloomThresholdVal"></output></label>
+  <label>抛物线高度 <input id="parabolaHeight" type="range" min="0" max="3" step="0.05" value="1.6"><output id="parabolaHeightVal"></output></label>
+  <label>循环进度 <span id="loopBar"><span id="loopFill"></span></span></label>
+  <label><button id="playPause" type="button">暂停</button></label>
+</div>
+
+<!-- Three.js 依赖加载器：多个 CDN 依次回退，全部就绪后启动主程序（防止单 CDN 失败导致黑屏） -->
+<script>
+(function () {
+  var FILES = [
+    'build/three.min.js',
+    'examples/js/controls/OrbitControls.js',
+    'examples/js/postprocessing/EffectComposer.js',
+    'examples/js/postprocessing/RenderPass.js',
+    'examples/js/postprocessing/ShaderPass.js',
+    'examples/js/postprocessing/MaskPass.js',
+    'examples/js/postprocessing/UnrealBloomPass.js',
+    'examples/js/shaders/CopyShader.js',
+    'examples/js/shaders/LuminosityHighPassShader.js'
+  ];
+  var CDNS = [
+    'https://fastly.jsdelivr.net/npm/three@0.128.0/',
+    'https://cdn.jsdelivr.net/npm/three@0.128.0/',
+    'https://unpkg.com/three@0.128.0/'
+  ];
+  var fi = 0;
+  function loadFile() {
+    if (fi >= FILES.length) { startApp(); return; }
+    var ci = 0;
+    function tryCdn() {
+      if (ci >= CDNS.length) { fi++; loadFile(); return; } // 该文件全部 CDN 失败：跳过继续
+      var s = document.createElement('script');
+      s.src = CDNS[ci] + FILES[fi];
+      s.onload = function () { fi++; loadFile(); };
+      s.onerror = function () { ci++; tryCdn(); };
+      document.head.appendChild(s);
+    }
+    tryCdn();
+  }
+  function startApp() {
+    if (typeof THREE === 'undefined') {
+      var d = document.createElement('div');
+      d.textContent = 'Three.js 库加载失败：请检查网络后刷新重试';
+      d.style.cssText = 'position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;background:#111;z-index:99;font:14px system-ui,sans-serif;';
+      document.body.appendChild(d);
+      return;
+    }
+    mainApp();
+  }
+  loadFile();
+})();
+</script>
+
+<script>
+function mainApp() {
+  'use strict';
+
+  // ===== 基础参数（特效测试可在此调整） =====
+  var ORBIT_RADIUS = 5;      // 轨道半径
+  var BALL_RADIUS  = 0.3;    // 小球半径
+  var POINTS       = 6;      // 跳点数量（等距分布在轨道上）
+  var JUMP_DURATION = 1.5;   // 单次跳跃耗时（秒）
+  var PAD_RADIUS   = 0.45;   // 落点圆片半径
+  var PAD_HEIGHT   = 0.08;   // 落点圆片厚度
+  // 落点球心高度：球直径 1/3 穿入圆片（球心在圆片顶面上方 半径/3）
+  var LAND_Y = PAD_HEIGHT / 2 + BALL_RADIUS / 3;
+
+  // ===== 渲染器 =====
+  var canvas = document.getElementById('stage');
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x111111, 1);
+
+  // ===== 场景与相机 =====
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 4.2, 9);
+  camera.lookAt(0, 0, 0);
+
+  // ===== 不加光：全部使用纯色材质 =====
+
+  // ===== 轨道：水平放置的极细圆环 =====
+  var track = new THREE.Mesh(
+    new THREE.TorusGeometry(ORBIT_RADIUS, 0.012, 8, 240),
+    new THREE.MeshBasicMaterial({ color: 0x8a8a8a })
+  );
+  track.rotation.x = Math.PI / 2;
+  scene.add(track);
+
+  // ===== 小球 =====
+  var ball = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_RADIUS, 32, 32),
+    new THREE.MeshBasicMaterial({ color: 0xff6b35 })
+  );
+  scene.add(ball);
+
+  // ===== 副球（落点分裂特效：一拆二时的第二个球，默认隐藏） =====
+  var splitBall = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_RADIUS, 32, 32),
+    new THREE.MeshBasicMaterial({ color: 0xff6b35 })
+  );
+  splitBall.visible = false;
+  scene.add(splitBall);
+
+  // ===== 视角控制：鼠标拖动旋转、滚轮缩放 =====
+  var controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.minDistance = 2;
+  controls.maxDistance = 25;
+
+  // ===== 自发光：UnrealBloomPass 后处理，让场景整体带发光光晕 =====
+  var composer = new THREE.EffectComposer(renderer);
+  composer.addPass(new THREE.RenderPass(scene, camera));
+  var bloomPass = new THREE.UnrealBloomPass(
+    new THREE.Vector2(window.innerWidth, window.innerHeight),
+    1.0,   // 发光强度
+    0.5,   // 光晕半径
+    0.25   // 亮度阈值：高于此亮度才发光
+  );
+  composer.addPass(bloomPass);
+
+  // ===== 水滴形拖尾（实体网格：沿轨迹的变截面管道，头大尾尖） =====
+  var TRAIL_BUFFER_MAX = 200;                  // 缓冲容量（2 秒 @60fps 足够）
+  var RADIAL_SEGS = 14;                        // 横截面圆的分段数
+  var TAPER_POWER = 1.6;                       // 水滴锥度：越大尾越尖
+  var trailSeconds = 0.8;                      // 当前拖尾时长（秒），由滑块控制
+
+  // 三角形索引一次构建（固定容量，按 drawRange 裁剪），主球/副球两个拖尾共享
+  var idx = [];
+  for (var i = 0; i < TRAIL_BUFFER_MAX - 1; i++) {
+    for (var k = 0; k < RADIAL_SEGS; k++) {
+      var a = i * RADIAL_SEGS + k;
+      var b = i * RADIAL_SEGS + ((k + 1) % RADIAL_SEGS);
+      var c = (i + 1) * RADIAL_SEGS + k;
+      var d = (i + 1) * RADIAL_SEGS + ((k + 1) % RADIAL_SEGS);
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+
+  // 拖尾工厂：创建独立几何/网格/采样缓冲（主球与副球各一个，副球分裂时启用）
+  var trailMat = new THREE.MeshBasicMaterial({ color: 0xff6b35 });
+  function createTrail() {
+    var geom = new THREE.BufferGeometry();
+    var verts = new Float32Array(TRAIL_BUFFER_MAX * RADIAL_SEGS * 3);
+    geom.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    geom.setIndex(idx);
+    geom.setDrawRange(0, 0);
+    var mesh = new THREE.Mesh(geom, trailMat);
+    mesh.frustumCulled = false;
+    scene.add(mesh);
+    return { mesh: mesh, geom: geom, positions: [], times: [] };
+  }
+  var trailA = createTrail();   // 主球拖尾
+  var trailB = createTrail();   // 副球拖尾（分裂时启用）
+
+  var UP = new THREE.Vector3(0, 1, 0);
+  var _tan = new THREE.Vector3();
+  var _right = new THREE.Vector3();
+  var _up2 = new THREE.Vector3();
+
+  function updateTrailFor(tr, pos, scale) {
+    // 每帧采样：跳跃路径上连续生成拖尾（pos 为 null 时不采样，只让已有拖尾按时间老化消失）
+    if (pos) {
+      tr.positions.unshift(pos.clone());
+      tr.times.unshift(simTime);
+    }
+    // 按时间窗口过期：拖尾长度 = 滑块秒数
+    while (tr.times.length > 0 && simTime - tr.times[tr.times.length - 1] > trailSeconds) {
+      tr.times.pop();
+      tr.positions.pop();
+    }
+    while (tr.positions.length > TRAIL_BUFFER_MAX) {
+      tr.times.pop();
+      tr.positions.pop();
+    }
+
+    var n = tr.positions.length;
+    if (n < 2) {
+      tr.mesh.visible = false; // 长度归零：只剩小球
+      return;
+    }
+    tr.mesh.visible = true;
+
+    var headR = BALL_RADIUS * scale; // 水滴头部半径随小球大小联动
+    if (!pos) {
+      // 无新采样（副球已合并）：头部半径按剩余寿命收缩，整条拖尾整体缩小消失
+      var remain = 1 - (simTime - tr.times[0]) / trailSeconds;
+      if (remain < 0) remain = 0;
+      headR = headR * remain;
+    }
+    var posAttr = tr.geom.attributes.position;
+
+    for (var j = 0; j < n; j++) {
+      // 轨迹切线方向（朝头部）
+      if (j === 0) {
+        _tan.subVectors(tr.positions[0], tr.positions[1]);
+      } else if (j === n - 1) {
+        _tan.subVectors(tr.positions[n - 2], tr.positions[n - 1]);
+      } else {
+        _tan.subVectors(tr.positions[j - 1], tr.positions[j + 1]);
+      }
+      _tan.normalize();
+
+      // 正交基：切线 + 固定上向量（轨道水平，不会共线）
+      _right.crossVectors(_tan, UP).normalize();
+      _up2.crossVectors(_right, _tan).normalize();
+
+      var p = tr.positions[j];
+      var t = j / (n - 1);                       // 0 = 头部，1 = 尾部
+      // 头环半径略收（0.97），埋进球内一点再自然出水，避免衔接处出现接缝
+      var r = headR * 0.97 * Math.pow(1 - t, TAPER_POWER); // 头大尾尖
+      if (r < 0.001) r = 0.001;
+
+      for (var k = 0; k < RADIAL_SEGS; k++) {
+        var ang = (k / RADIAL_SEGS) * Math.PI * 2;
+        var ox = Math.cos(ang) * r;
+        var oy = Math.sin(ang) * r;
+        posAttr.setXYZ(
+          j * RADIAL_SEGS + k,
+          p.x + _right.x * ox + _up2.x * oy,
+          p.y + _right.y * ox + _up2.y * oy,
+          p.z + _right.z * ox + _up2.z * oy
+        );
+      }
+    }
+    posAttr.needsUpdate = true;
+    tr.geom.setDrawRange(0, (n - 1) * RADIAL_SEGS * 6);
+  }
+
+  function updateTrail(dt) {
+    // 主球拖尾始终采样
+    updateTrailFor(trailA, ball.position, ball.scale.x);
+    if (splitBall.visible) {
+      // 分裂期：副球拖尾同步采样
+      updateTrailFor(trailB, splitBall.position, splitBall.scale.x);
+    } else if (trailB.positions.length > 0) {
+      // 副球已合并：不再采样，残留拖尾按时间自然缩短消失
+      updateTrailFor(trailB, null, splitBall.scale.x);
+    }
+  }
+
+  // ===== 调整区控件 =====
+  var trailLengthInput = document.getElementById('trailLength');
+  var ballSizeInput = document.getElementById('ballSize');
+  var bloomStrengthInput = document.getElementById('bloomStrength');
+  var bloomRadiusInput = document.getElementById('bloomRadius');
+  var bloomThresholdInput = document.getElementById('bloomThreshold');
+  var parabolaHeightInput = document.getElementById('parabolaHeight');
+  var trailLengthVal = document.getElementById('trailLengthVal');
+  var ballSizeVal = document.getElementById('ballSizeVal');
+  var bloomStrengthVal = document.getElementById('bloomStrengthVal');
+  var bloomRadiusVal = document.getElementById('bloomRadiusVal');
+  var bloomThresholdVal = document.getElementById('bloomThresholdVal');
+  var parabolaHeightVal = document.getElementById('parabolaHeightVal');
+
+  function onTrailLength() {
+    trailSeconds = parseFloat(trailLengthInput.value);
+    trailLengthVal.textContent = trailSeconds.toFixed(2) + 's';
+  }
+  function onBallSize() {
+    var v = parseFloat(ballSizeInput.value);
+    ballSizeVal.textContent = v.toFixed(2) + 'x';
+    ball.scale.setScalar(v);
+  }
+  function onBloomStrength() {
+    var v = parseFloat(bloomStrengthInput.value);
+    bloomStrengthVal.textContent = v.toFixed(2);
+    bloomPass.strength = v;
+  }
+  function onBloomRadius() {
+    var v = parseFloat(bloomRadiusInput.value);
+    bloomRadiusVal.textContent = v.toFixed(2);
+    bloomPass.radius = v;
+  }
+  function onBloomThreshold() {
+    var v = parseFloat(bloomThresholdInput.value);
+    bloomThresholdVal.textContent = v.toFixed(2);
+    bloomPass.threshold = v;
+  }
+  function onParabolaHeight() {
+    var v = parseFloat(parabolaHeightInput.value);
+    parabolaHeightVal.textContent = v.toFixed(2);
+    parabolaHeight = v;
+  }
+  trailLengthInput.addEventListener('input', onTrailLength);
+  ballSizeInput.addEventListener('input', onBallSize);
+  bloomStrengthInput.addEventListener('input', onBloomStrength);
+  bloomRadiusInput.addEventListener('input', onBloomRadius);
+  bloomThresholdInput.addEventListener('input', onBloomThreshold);
+  parabolaHeightInput.addEventListener('input', onParabolaHeight);
+  onTrailLength();
+  onBallSize();
+  onBloomStrength();
+  onBloomRadius();
+  onBloomThreshold();
+  onParabolaHeight();
+
+  // ===== 六个目标点：等距分布在轨道上，小球按序跳转循环 =====
+  var waypoints = [];
+  for (var i = 0; i < POINTS; i++) {
+    var wa = (i / POINTS) * Math.PI * 2;
+    waypoints.push({
+      angle: wa,
+      pos: new THREE.Vector3(ORBIT_RADIUS * Math.cos(wa), 0, ORBIT_RADIUS * Math.sin(wa))
+    });
+  }
+
+  // 落点标记：六个扁圆柱圆片，平放在 XZ 底面（默认熄灭，碰撞点亮）
+  var PAD_DIM = 0x2a2a2a;   // 熄灭色（暗灰）
+  var PAD_LIT = 0xff8c4a;   // 点亮色（亮橙，与球/拖尾同系，bloom 下发光）
+  var pads = [];
+  for (var i = 0; i < POINTS; i++) {
+    var mk = new THREE.Mesh(
+      new THREE.CylinderGeometry(PAD_RADIUS, PAD_RADIUS, PAD_HEIGHT, 24),
+      new THREE.MeshBasicMaterial({ color: PAD_DIM })
+    );
+    mk.position.set(waypoints[i].pos.x, 0, waypoints[i].pos.z);
+    scene.add(mk);
+    pads.push(mk);
+  }
+
+  // 圆心点：分裂特效的另一个目的地标记（暗灰待点亮，副球落下时点亮，起飞后熄灭）
+  var centerPad = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.3, 0.3, PAD_HEIGHT, 24),
+    new THREE.MeshBasicMaterial({ color: PAD_DIM })
+  );
+  centerPad.position.set(0, 0, 0);
+  scene.add(centerPad);
+
+  // 六边形边辅助线：XZ 平面连接相邻落点的直线（俯视投影参考，非实际路径）
+  var hexVerts = [];
+  for (var i = 0; i <= POINTS; i++) {
+    var hp = waypoints[i % POINTS].pos;
+    hexVerts.push(hp.x, 0, hp.z);
+  }
+  var hexGeom = new THREE.BufferGeometry();
+  hexGeom.setAttribute('position', new THREE.Float32BufferAttribute(hexVerts, 3));
+  var hexLine = new THREE.Line(hexGeom, new THREE.LineBasicMaterial({ color: 0x555555 }));
+  scene.add(hexLine);
+
+  // ===== 跳点状态机：六段路径首尾相接，每段两点直线 + 抛物线跳跃，不停留 =====
+  var simTime = 0;
+  var curPoint = 0;            // 当前所在点（起飞点索引）
+  var jumpT = 0;               // 跳跃进度 0~1
+  var jumpFrom = new THREE.Vector3();
+  var jumpTo = new THREE.Vector3();
+  var parabolaHeight = 1.6;    // 抛物线拱高，由滑块控制
+  var clock = new THREE.Clock();
+
+  // ===== 落点分裂特效：球到 SPLIT_POINT 一拆二，分别去下一落点与圆心，再同时飞去再下一落点会合 =====
+  // 流程示例（SPLIT_POINT=3）：1>2>3 分裂 → 主球去 4、副球去圆心 o → 两球同时飞到 5 合并 → 6
+  var phase = 'normal';        // 'normal' 单球 | 'split1' 两球分道 | 'split2' 两球同飞会合
+  var SPLIT_POINT = 3;         // 分裂落点（"随便选的一个点"，可改）
+  var CENTER_POS = new THREE.Vector3(0, LAND_Y, 0); // 圆心点（副球的分道目的地）
+  var splitFrom = new THREE.Vector3();
+  var splitTo = new THREE.Vector3();
+
+  function startJump() {
+    jumpT = 0;
+    jumpFrom.copy(waypoints[curPoint].pos);
+    jumpFrom.y = LAND_Y;
+    jumpTo.copy(waypoints[(curPoint + 1) % POINTS].pos);
+    jumpTo.y = LAND_Y;
+  }
+
+  // 播放/暂停元素引用
+  var loopFill = document.getElementById('loopFill');
+  var playPauseBtn = document.getElementById('playPause');
+
+  // ===== 循环进度条：可拖动 seek（跳转到循环内任意位置） =====
+  var bar = document.getElementById('loopBar');
+  var barDragging = false;
+  function barRatio(e) {
+    var r = bar.getBoundingClientRect();
+    return Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1);
+  }
+  function seekTo(prog) {
+    var total = prog * POINTS;
+    if (total >= POINTS) total = POINTS - 0.001;
+    curPoint = Math.floor(total) % POINTS;
+    jumpT = total - Math.floor(total);
+    jumpFrom.copy(waypoints[curPoint].pos); jumpFrom.y = LAND_Y;
+    jumpTo.copy(waypoints[(curPoint + 1) % POINTS].pos); jumpTo.y = LAND_Y;
+    ball.position.lerpVectors(jumpFrom, jumpTo, jumpT);
+    ball.position.y = LAND_Y + 4 * parabolaHeight * jumpT * (1 - jumpT);
+    // 拖尾重置：清空历史采样，从新位置重新积累（主球/副球都清）
+    trailA.positions.length = 0;
+    trailA.times.length = 0;
+    trailA.mesh.visible = false;
+    trailB.positions.length = 0;
+    trailB.times.length = 0;
+    trailB.mesh.visible = false;
+    // 若处于分裂中，seek 直接合并回单球；中心点恢复暗灰
+    phase = 'normal';
+    splitBall.visible = false;
+    centerPad.material.color.setHex(PAD_DIM);
+    // 圆片：按循环稳定态重设（亮 = 当前位置及前 3 个，暗 = 后 2 个）
+    for (var i = 0; i < POINTS; i++) {
+      var d = (curPoint - i + POINTS) % POINTS;
+      pads[i].material.color.setHex(d <= 3 ? PAD_LIT : PAD_DIM);
+    }
+    updateLoopProgress();
+  }
+  bar.addEventListener('pointerdown', function (e) {
+    barDragging = true;
+    seekTo(barRatio(e));
+    if (bar.setPointerCapture) bar.setPointerCapture(e.pointerId);
+  });
+  bar.addEventListener('pointermove', function (e) {
+    if (barDragging) seekTo(barRatio(e));
+  });
+  bar.addEventListener('pointerup', function (e) {
+    barDragging = false;
+    seekTo(barRatio(e));
+  });
+  bar.addEventListener('pointercancel', function () {
+    barDragging = false;
+  });
+
+  function tick() {
+    if (paused) {
+      // 暂停：球/拖尾/圆片全停住，仅保持渲染与进度条显示
+      updateLoopProgress();
+      controls.update();
+      composer.render();
+      return;
+    }
+    var dt = Math.min(clock.getDelta(), 0.05); // 防止长时间挂起后跳帧
+    simTime += dt;
+
+    if (phase === 'normal') {
+      // ===== 单球：每帧跳跃，水平直线 + 抛物线高度 =====
+      jumpT += dt / JUMP_DURATION;
+      var t;
+      if (jumpT >= 1) {
+        // 到达目标点：切换到下一段（首尾相接），本帧球停在新起点（落点）
+        curPoint = (curPoint + 1) % POINTS;
+        startJump();      // jumpT 归零，from=落点, to=下一目标
+        t = 0;            // 本帧渲染 t=0：球停在落点，下一帧起飞
+        // 落点特效：碰撞点亮当前落点；熄灭"前两个"落点（等待下次被碰撞点亮）
+        pads[curPoint].material.color.setHex(PAD_LIT);
+        pads[(curPoint + 2) % POINTS].material.color.setHex(PAD_DIM);
+        // 落点分裂：到达指定落点一拆二，两球分道去下一落点与圆心
+        if (curPoint === SPLIT_POINT) {
+          phase = 'split1';
+          splitBall.position.copy(ball.position);
+          splitBall.scale.copy(ball.scale); // 副球大小跟随主球（滑块联动）
+          splitBall.visible = true;
+          // 副球拖尾从分裂点开始重新积累
+          trailB.positions.length = 0;
+          trailB.times.length = 0;
+          trailB.mesh.visible = false;
+        }
+      } else {
+        t = jumpT;
+      }
+      ball.position.lerpVectors(jumpFrom, jumpTo, t);
+      ball.position.y = LAND_Y + 4 * parabolaHeight * t * (1 - t);
+    } else if (phase === 'split1') {
+      // ===== 分裂·分道：主球 A→A+1（沿六边形边），副球 A→圆心，同相位同时落下 =====
+      jumpT += dt / JUMP_DURATION;
+      if (jumpT >= 1) {
+        // 两球同时落下：主球在 A+1，副球在圆心 → 两球同时飞向 A+2 会合
+        phase = 'split2';
+        jumpT = 0;
+        splitFrom.copy(CENTER_POS);                          // 副球从圆心出发
+        splitTo.copy(waypoints[(curPoint + 2) % POINTS].pos); // 副球去 A+2（会合点）
+        splitTo.y = LAND_Y;
+        // 副球落下圆心：中心点点亮；副球即将起飞，主球落下 A+1 点亮该落点
+        centerPad.material.color.setHex(PAD_LIT);
+        pads[(curPoint + 1) % POINTS].material.color.setHex(PAD_LIT);
+        pads[(curPoint + 3) % POINTS].material.color.setHex(PAD_DIM);
+        ball.position.lerpVectors(jumpFrom, jumpTo, 1);
+        ball.position.y = LAND_Y;
+      } else {
+        var tt = jumpT;
+        ball.position.lerpVectors(jumpFrom, jumpTo, tt);
+        ball.position.y = LAND_Y + 4 * parabolaHeight * tt * (1 - tt);
+        splitBall.position.lerpVectors(jumpFrom, CENTER_POS, tt);
+        splitBall.position.y = LAND_Y + 4 * parabolaHeight * tt * (1 - tt);
+      }
+    } else {
+      // ===== 分裂·会合：主球 A+1→A+2，副球圆心→A+2，两球同时到达 A+2 重合合并 =====
+      jumpT += dt / JUMP_DURATION;
+      if (jumpT >= 1) {
+        // 两球同时落在 A+2：合并回单球，从 A+2 继续下一段
+        phase = 'normal';
+        splitBall.visible = false;
+        // 副球拖尾保留：不再采样，在 updateTrail 中按时间自然缩短消失；中心点熄灭（等下次分裂再点亮）
+        centerPad.material.color.setHex(PAD_DIM);
+        curPoint = (curPoint + 2) % POINTS;
+        startJump();
+        ball.position.lerpVectors(jumpFrom, jumpTo, 0);
+        ball.position.y = LAND_Y;
+        pads[curPoint].material.color.setHex(PAD_LIT);
+        pads[(curPoint + 2) % POINTS].material.color.setHex(PAD_DIM);
+      } else {
+        var tt2 = jumpT;
+        var pa = (curPoint + 1) % POINTS;  // A+1（主球起点）
+        var pb = (curPoint + 2) % POINTS;  // A+2（会合点）
+        ball.position.lerpVectors(waypoints[pa].pos, waypoints[pb].pos, tt2);
+        ball.position.y = LAND_Y + 4 * parabolaHeight * tt2 * (1 - tt2);
+        splitBall.position.lerpVectors(splitFrom, splitTo, tt2);
+        splitBall.position.y = LAND_Y + 4 * parabolaHeight * tt2 * (1 - tt2);
+      }
+    }
+
+    updateLoopProgress();
+    updateTrail(dt);
+    controls.update();
+    composer.render();
+  }
+
+  // ===== 循环进度条：显示整圈（6 段）进度 0~100% =====
+  function updateLoopProgress() {
+    var prog = (curPoint + jumpT) / POINTS;
+    loopFill.style.width = (Math.min(prog, 1) * 100).toFixed(1) + '%';
+  }
+
+  // ===== 播放 / 暂停 =====
+  var paused = false;
+  playPauseBtn.addEventListener('click', function () {
+    paused = !paused;
+    playPauseBtn.textContent = paused ? '播放' : '暂停';
+  });
+
+  // ===== 首帧立即渲染（不等动画循环） =====
+  startJump();                  // from=点0 to=点1
+  ball.position.copy(jumpFrom); // 首帧球落在点 0（1/3 穿模圆片）
+  pads[0].material.color.setHex(PAD_LIT); // 起点圆片已碰撞点亮
+  composer.render();
+
+  // ===== 动画循环：始终运行，不做任何暂停 =====
+  function loop() {
+    requestAnimationFrame(loop);
+    tick();
+  }
+  loop();
+
+  // ===== 窗口尺寸变化 =====
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+  });
+}
+</script>
+</body>
+</html>

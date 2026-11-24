@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>星跃谱 LumiScore · 连线检查</title>
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" type="image/svg+xml" href="../../icons/lumiscore-favicon.svg" />
+  <link rel="stylesheet" href="../../shell-theme.css" />
+  <!-- 首屏这几件事必须内联（外链脚本和模块都要等整张依赖图下载求值完才执行）：
+       ① 主题/动效偏好：原来要等 JS 才写 data-theme，暗色用户必然先白闪一下再转暗；
+       ② data-boot='1'：让 public/shell-theme.css 里的令牌副本先顶着首帧，
+          外壳挂上后由 shell.ts 摘掉标记，副本自动退出层叠，不存在谁覆盖谁；
+       ③ 看门狗兜底：模块图过大、某个资源 404、任何一处抛错时，页面不能永远停在
+          「data-i18n 节点全是空、按钮没字」的骨架上，至少给一句人话和一个重试按钮；
+       ④ 装配看门狗：外壳挂上 ≠ 本页脚本跑完。模块顶层半途抛错时后半段根本不执行，
+          症状是「页面看着正常、下拉和面板全没了」，所以模块要走完顶层并调
+          __lumiReady()，没调到就把这条中断显式挂在页面上（各页 main.ts 末尾）。 -->
+  <script>
+    (function () {
+      var root = document.documentElement
+      root.dataset.boot = '1'
+      try {
+        var tm = localStorage.getItem('midee.theme') || 'system'
+        root.dataset.theme =
+          tm === 'dark' || (tm === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+            ? 'dark'
+            : 'light'
+        root.dataset.motion = localStorage.getItem('midee.motion') === 'reduced' ? 'reduced' : 'full'
+      } catch (e) {
+        /* 隐私模式读不到 localStorage：按默认亮色 */
+      }
+      // 看门狗跑在模块图之前，没法 import i18n：就地按持久化语言挑一份极简词表
+      var zh = false
+      try {
+        var savedLocale = localStorage.getItem('midee.locale')
+        zh = savedLocale
+          ? savedLocale.indexOf('zh') === 0
+          : (navigator.language || '').indexOf('zh') === 0
+      } catch (e) {
+        /* 沿用中文 */
+      }
+      var L = zh
+        ? { head: '界面没能加载完成', sep: '：', tail: '，可能是网络或资源加载被打断。', retry: '重新加载', ignore: '暂不处理', asm: '本页控件没能全部装上：页面脚本被一条错误中断，下拉和面板点了可能没反应。原因见下面那行，浏览器控制台（F12）里有完整堆栈。', res: '资源或脚本加载失败', async: '异步任务失败', timeout: '超时未就绪', title: '星跃谱 LumiScore · 连线检查' }
+        : { head: 'The interface failed to load', sep: ': ', tail: '. The network or a resource may have been interrupted.', retry: 'Reload', ignore: 'Dismiss', asm: 'Some controls on this page never got built: the page script was interrupted by an error, so dropdowns and panels may do nothing. The line below names the cause; the browser console (F12) has the full trace.', res: 'A resource or script failed to load', async: 'An async task failed', timeout: 'Timed out before it was ready', title: 'LumiScore · Links' }
+      document.title = L.title
+      var timer = 0
+      var box = null
+      // 装配看门狗：「外壳挂上了」不等于「本页脚本跑完了」。模块后半段一抛错就悄无声息
+      // 地不执行，症状是页面看着正常、下拉和面板全没了——只有本页自己知道装配是否结束，
+      // 所以约定模块顶层走完要调 __lumiReady()。没调到 = 初始化被中断。
+      var asm = { ready: false, err: '', hushed: false }
+      window.__lumiAsm = asm
+      // e.target 是元素 → 资源 404（无关紧要）；是 window → 脚本运行时错误（真凶）
+      function isScriptErr(e) {
+        return !!(e && e.message && (!e.target || e.target === window))
+      }
+      function show(reason) {
+        if (box || root.dataset.topbar === 'expanded') return
+        box = document.createElement('div')
+        box.className = 'lumi-bootfail'
+        box.setAttribute('role', 'alert')
+        box.textContent = L.head + (reason ? L.sep + reason : '') + L.tail
+        var btn = document.createElement('button')
+        btn.type = 'button'
+        btn.textContent = L.retry
+        btn.addEventListener('click', function () {
+          location.reload()
+        })
+        box.appendChild(btn)
+        document.body.appendChild(box)
+      }
+      // 装配中断专用：不看 topbar，把错误原文摊开，给「重新加载」和「暂不处理」两个出口
+      function showAsm() {
+        if (asm.ready || asm.hushed || box) return
+        box = document.createElement('div')
+        box.className = 'lumi-bootfail lumi-bootfail--asm'
+        box.setAttribute('role', 'alert')
+        var p = document.createElement('div')
+        p.textContent = L.asm
+        box.appendChild(p)
+        if (asm.err) {
+          var d = document.createElement('div')
+          d.className = 'lumi-bootfail__err'
+          d.textContent = asm.err
+          box.appendChild(d)
+        }
+        var r = document.createElement('button')
+        r.type = 'button'
+        r.textContent = L.retry
+        r.addEventListener('click', function () {
+          location.reload()
+        })
+        var x = document.createElement('button')
+        x.type = 'button'
+        x.className = 'lumi-bootfail__x'
+        x.textContent = L.ignore
+        x.addEventListener('click', function () {
+          // 记下「暂不处理」：15s 那条兜底定时器不能再把横幅弹回来
+          asm.hushed = true
+          box.remove()
+          box = null
+        })
+        box.append(r, x)
+        document.body.appendChild(box)
+      }
+      // 报错先宽限 1.5s：无关资源 404 不该抢先把人吓一跳，外壳正常挂上就一笔勾销；
+      // 装配未完成时的脚本错误就是真凶，不等。
+      function suspect(reason, fatal) {
+        if (timer || box) return
+        timer = setTimeout(
+          function () {
+            timer = 0
+            if (fatal) showAsm()
+            else show(reason)
+          },
+          fatal ? 300 : 1500
+        )
+      }
+      // capture=true 才收得到 link/script 这类资源加载失败
+      addEventListener('error', function (e) {
+        var msg = e && e.message ? String(e.message).slice(0, 140) : ''
+        var fatal = isScriptErr(e) && !asm.ready
+        if (fatal && !asm.err) asm.err = msg
+        suspect(msg || L.res, fatal)
+      }, true)
+      addEventListener('unhandledrejection', function () {
+        suspect(L.async)
+      })
+      setTimeout(function () {
+        show(L.timeout)
+      }, 10000)
+      // 初始化卡住不报错（await 永不返回）也算装配失败，只是没有错误原文。
+      // 留 15s：dev 冷启动整张模块图可能就要十几秒，别抢跑。
+      setTimeout(function () {
+        showAsm()
+      }, 15000)
+      window.__lumiBooted = function () {
+        delete root.dataset.boot
+        if (timer) {
+          clearTimeout(timer)
+          timer = 0
+        }
+        // 装配中断的横幅不归外壳管：它说的是本页脚本没跑完，topbar 起来不代表控件装上了
+        if (box && !box.classList.contains('lumi-bootfail--asm')) {
+          box.remove()
+          box = null
+        }
+      }
+      // 由模块在顶层求值全部走完后调用（见各页 main.ts 末尾）
+      window.__lumiReady = function () {
+        asm.ready = true
+        if (box && box.classList.contains('lumi-bootfail--asm')) {
+          box.remove()
+          box = null
+        }
+      }
+    })()
+  </script>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    body { overflow: hidden; font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif; background: #ffffff; }
+    :root[data-topbar='expanded'] #score { top: var(--sh-topbar-h); }
+    #score {
+      position: fixed;
+      left: var(--sh-dock-left, 0px); right: calc(var(--sh-side-inset) + var(--sh-dock-right, 0px)); top: 0; bottom: 0;
+      overflow: auto;
+      /* 连线工作台固定白底黑谱，不随暗色主题调暗 */
+      background: #ffffff;
+      /* 与第 2 页同口径：单指留给原生平移滚动，双指由脚本 zoomAt 缩放。
+         不写这条的话浏览器会自己吃掉捏合手势去缩放整页（fixed 顶栏/悬浮窗会跟着跑位），
+         且脚本里的 preventDefault 并不能夺回手势，只会收到一个 pointercancel。 */
+      touch-action: pan-x pan-y;
+    }
+    body.dark2d #score { background: #14161a; }
+    /* 黑底白谱：只反白 Verovio 乐谱主体（谱线/音符/文字）；
+       所有 .lk-* 覆盖层（端点/播放球/路径/竖线）保留原色不反白 */
+    body.dark2d #scoreInner svg :is(path, rect, circle, ellipse, line, polyline, polygon, text, use):not(:where([class*="lk-"], [class*="lk-"] *)) {
+      fill: #f0f2f5 !important;
+      stroke: #f0f2f5 !important;
+    }
+    /* 黑底下端点默认态：白圈 + 深灰内填充（点亮绿/问题红等状态色保留原色） */
+    body.dark2d #scoreInner svg .lk-node:not(.is-visited):not(.is-bad):not(.is-orphan):not(.is-pending) {
+      fill: #3a3d44 !important;
+      stroke: #f0f2f5 !important;
+      stroke-width: 1.8 !important;
+    }
+    #scoreInner {
+      position: relative;
+      width: max-content;
+      min-width: 100%;
+      box-sizing: border-box;
+      padding: 26px 90px 80px 90px;
+    }
+    #scoreInner svg { display: block; }
+    #empty { display: none; }
+
+    /* 连线覆盖层元素 */
+    #scoreInner svg g.note { cursor: pointer; }
+    .lk-hint {
+      position: fixed; left: 12px; bottom: 10px; z-index: 20;
+      font-size: 11.5px; color: var(--sh-faint);
+      background: color-mix(in srgb, var(--sh-surface) 80%, transparent);
+      padding: 5px 10px; border-radius: 8px; pointer-events: none;
+      max-width: 70vw;
+    }
+
+    /* 起点 / 终点竖线（中性灰，不是连线，不占路径色） */
+    .lk-term-line { stroke: #8a8f99; stroke-width: 2; opacity: 0.7; pointer-events: none; }
+    /* 竖线的隐形命中区：整条可横向拖拽（距离记在 store，第五页同口径映射） */
+    .lk-term-hit {
+      stroke: transparent; stroke-width: 24; pointer-events: stroke;
+      cursor: ew-resize; touch-action: none;
+    }
+    .lk-term-hit:active { cursor: grabbing; }
+    .lk-term-label { fill: #8a8f99; font-size: 26px; font-weight: 700; pointer-events: none; }
+    .lk-anchor {
+      fill: #fff; stroke: #555a63; stroke-width: 3; cursor: grab;
+      touch-action: none; /* 手指按在锚点上直接拖，不让浏览器抢去平移 */
+    }
+    .lk-anchor.is-bad { stroke: #e5232b; fill: #ffe3e4; }
+    .lk-anchor:active { cursor: grabbing; }
+
+    /* 边：永远只是所属路径颜色的细线；不使用红/灰/绿等其他颜色 */
+    .lk-edge-hit { fill: none; stroke: transparent; stroke-width: 22px; cursor: pointer; pointer-events: stroke; touch-action: none; }
+    .lk-edge-line { fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+    /* 选中边：虚线 + 不加粗；两端端点变绿（见 .lk-node.is-endpoint-sel） */
+    .lk-edge.is-selected .lk-edge-line { stroke-dasharray: 6 5; }
+    .lk-temp { fill: none; stroke-width: 2.6; stroke-dasharray: 7 6; pointer-events: none; opacity: 0.85; }
+
+    /* 端点：默认白底深色描边（不染色）；问题=红；走过/正确=绿；选中/待连线=绿 */
+    .lk-node {
+      fill: #ffffff; stroke: #3c4048; stroke-width: 1.8;
+      pointer-events: none;
+    }
+    .lk-node.is-visited { fill: #19b45a; stroke: #0d7a3c; }
+    .lk-node.is-endpoint-sel { fill: #19b45a; stroke: #0d7a3c; stroke-width: 2.6; }
+    .lk-node.is-pending { fill: #19b45a; stroke: #0d7a3c; stroke-width: 2.6; }
+    .lk-node.is-bad,
+    .lk-node.is-orphan { fill: #e5232b; stroke: #a01118; }
+    .lk-node.is-snap { fill: #ffffff; stroke: #19b45a; stroke-width: 3.4; }
+    .lk-node-hit { fill: transparent; pointer-events: all; cursor: pointer; touch-action: none; }
+    /* 触屏上 13px 半径的命中圈太难点中，放大到 20（只放大隐形命中圈，端点外观不变） */
+    @media (pointer: coarse) {
+      .lk-node-hit { r: 20px; }
+      /* 手指拖竖线：24 宽的命中带对指尖太窄 */
+      .lk-term-hit { stroke-width: 44; }
+    }
+
+    /* 报错选中：红绿闪烁 */
+    @keyframes lk-flash-bad {
+      0%, 100% { stroke: #e5232b; }
+      50% { stroke: #19b45a; }
+    }
+    .lk-edge.is-bad-flash .lk-edge-line { animation: lk-flash-bad 0.5s steps(1) infinite; stroke-width: 4; }
+    .lk-node.is-bad-flash { animation: lk-flash-bad 0.5s steps(1) infinite; stroke-width: 3; }
+
+    /* 播放圆点 */
+    .lk-ball { pointer-events: none; }
+
+    /* 路径选择悬浮窗：窗口自适应裁剪 + 滚轮/触屏滑动够到被裁掉的条目 */
+    .lk-paths {
+      position: fixed; z-index: 60; top: calc(var(--sh-topbar-h) + 10px); right: calc(var(--sh-side-inset) + 12px);
+      background: var(--sh-surface); border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-lg); box-shadow: var(--sh-shadow-2);
+      min-width: 188px; max-width: 260px;
+      max-height: calc(100svh - var(--sh-topbar-h) - var(--sh-dock-bottom, 0px) - 24px);
+      overflow: auto;
+      overscroll-behavior: contain;
+      touch-action: pan-x pan-y;
+      -webkit-overflow-scrolling: touch;
+    }
+    /* 竖屏（底栏）与超宽（侧栏）两种收纳态：路径面板改成贴边抽屉，
+       尺寸仍用面板自己的（不拉伸），只是锚死在右下角、从栏边上弹出来。
+       --sh-dock-top / --sh-dock-bottom 由外壳量好两条栏的高度写进根元素 */
+    @media (max-aspect-ratio: 1/1) {
+      .lk-paths {
+        top: auto; right: 0;
+        bottom: var(--sh-dock-bottom, 84px);
+        max-height: calc(100svh - var(--sh-dock-top, 69px) - var(--sh-dock-bottom, 84px));
+        border-radius: var(--sh-r-lg) 0 0 var(--sh-r-lg); border-right: 0;
+      }
+    }
+    @media (min-aspect-ratio: 2/1) {
+      .lk-paths {
+        top: auto; bottom: var(--sh-dock-bottom, 44px);
+        right: calc(var(--sh-side-inset) + 12px);
+        max-height: calc(100svh - var(--sh-dock-top, 44px) - var(--sh-dock-bottom, 44px));
+      }
+    }
+    /* 超宽 / 竖屏：横向滚动交给外壳自绘的拖动条（原生滚动条抬不到控件条上方，
+       也做不到「滚动出条、静止出提示」的互换），所以这里收掉原生条。
+       提示文字留在同一条底边上，跟拖动条二选一显示（见 shell/shell.css）。 */
+    @media (min-aspect-ratio: 2/1), (max-aspect-ratio: 1/1) {
+      #score { scrollbar-width: none; }
+      #score::-webkit-scrollbar { display: none; }
+    }
+    @media (min-aspect-ratio: 2/1) {
+      /* 超宽屏底边整片控件都无背板压在画面上，提示文字跟着去掉底板 */
+      .lk-hint { background: none; padding: 5px 0; }
+    }
+    @media (max-aspect-ratio: 1/1) {
+      .lk-hint { bottom: calc(var(--sh-dock-bottom, 84px) + 6px); }
+    }
+    .lk-paths__head {
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 12px; font-size: 13px; font-weight: 650;
+      border-bottom: 1px solid var(--sh-border);
+      position: sticky; top: 0; background: var(--sh-surface);
+    }
+    .lk-paths__add {
+      margin-left: auto; border: 1px solid var(--sh-border); background: var(--sh-surface-2);
+      color: var(--sh-text); border-radius: 6px; width: 24px; height: 24px;
+      font-size: 15px; line-height: 1; cursor: pointer;
+    }
+    .lk-paths__add:hover { border-color: var(--sh-accent); color: var(--sh-accent); }
+    .lk-pathrow {
+      display: flex; align-items: center; gap: 8px; width: 100%;
+      padding: 8px 12px; border: 0; background: transparent; color: var(--sh-text);
+      font: inherit; font-size: 12.5px; cursor: pointer; text-align: left;
+      border-bottom: 1px solid color-mix(in srgb, var(--sh-border) 55%, transparent);
+    }
+    .lk-pathrow:hover { background: var(--sh-surface-2); }
+    .lk-pathrow:focus-visible { outline: 2px solid var(--sh-accent); outline-offset: -2px; }
+    .lk-pathrow.is-active { background: color-mix(in srgb, var(--sh-accent) 13%, transparent); }
+    .lk-sw {
+      width: 13px; height: 13px; border-radius: 50%; flex: none;
+      border: 0; padding: 0; cursor: pointer;
+      box-shadow: 0 0 0 1px rgba(0,0,0,.15) inset;
+    }
+    .lk-sw:focus-visible { outline: 2px solid var(--sh-accent); outline-offset: 2px; }
+    .lk-pathrow__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lk-pathrow__edit {
+      flex: 1; min-width: 0; font: inherit; font-size: 12.5px; color: var(--sh-text);
+      background: var(--sh-surface-2); border: 1px solid var(--sh-accent); border-radius: 5px;
+      padding: 2px 6px; outline: none;
+    }
+    .lk-pathrow__del {
+      border: 0; background: transparent; color: var(--sh-faint); cursor: pointer;
+      font-size: 14px; padding: 0 2px; border-radius: 4px;
+    }
+    .lk-pathrow__del:hover { color: var(--sh-danger); }
+    .lk-paths__empty { padding: 12px; font-size: 12px; color: var(--sh-faint); }
+    /* 触屏：色点 13px、删除号 ~18px，指尖根本点不中。行加高到接近 44，
+       命中区只往行内留白与外侧扩，不往「路径名」那侧扩——否则点名字会变成改色/删除。 */
+    @media (pointer: coarse) {
+      .lk-pathrow { padding: 12px; }
+      .lk-paths__add { width: 32px; height: 32px; }
+      .lk-sw, .lk-pathrow__del { position: relative; }
+      .lk-sw::after { content: ''; position: absolute; inset: -14px -4px -14px -12px; }
+      .lk-pathrow__del::after { content: ''; position: absolute; inset: -14px -12px -14px -4px; }
+    }
+
+    /* 顶栏面板里的策略控件 */
+    .lk-polrow {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 7px 12px; font-size: 12.5px;
+    }
+    .lk-polrow > span { color: var(--sh-muted); white-space: nowrap; }
+    .lk-polrow .lk-sel {
+      width: 170px; max-width: 170px; font-size: 12px;
+    }
+    input.lk-num { width: 70px; text-align: right; }
+  </style>
+</head>
+<body>
+  <div id="score">
+    <div id="scoreInner"></div>
+  </div>
+  <div id="empty" class="box"><h2>还没有乐谱数据</h2><p>请先到导入页导入</p><div><button class="sh-btn sh-btn--primary" type="button" id="emptyNext">去导入 →</button></div></div>
+  <div class="lk-hint" id="hint"></div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

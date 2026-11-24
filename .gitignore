@@ -1,0 +1,77 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+dist-ssr/
+*.local
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# env
+.env
+.env.*
+!.env.example
+
+# editor / os
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# cache / temp
+.vite/
+.tmp*
+.npm-cache-tmp/
+__edge_profile/
+coverage/
+
+# dev backups & scratch
+*-backup-*/
+外壳备份_*/
+/dump*
+
+# root-level dev scratch / debug dumps / screenshots / backup configs
+# (anchored to repo root ONLY — does not affect src/, scripts/, etc.)
+/*.txt
+/*.png
+/*.mid
+/*.py
+/*.mjs
+/*.bat
+/_diag_*
+/night-*
+/text-*
+/tmp-*
+/temp_*
+/vite.config.ts.backup*
+/vite.config.ts.bak
+/vite.config.ts.restored
+/vite.config.fixed.ts
+
+# generated build output & deploy bundles (regenerate via `npm run build:lumiscore`)
+lumiscore/
+deploy/
+/assets/
+
+# dev test bench / harness — NOT part of the shipped app
+shell-test/
+
+# malformed paths created by accident (leading double-quote)
+/"*
+
+# root-level stray vector dumps
+/*.svg
+
+# backup files anywhere
+*.bak
+*.backup
