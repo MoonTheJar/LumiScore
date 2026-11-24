@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Piano</part-name></score-part>
+    <score-part id="P2"><part-name>Drums</part-name><score-instrument id="P2-I1"><instrument-name>Snare</instrument-name></score-instrument></score-part>
+    <score-part id="P3"><part-name>Flute</part-name></score-part>
+  </part-list>
+
+  <!-- ══════════ P1 钢琴（大谱表：右手 staff1 / 左手 staff2） ══════════ -->
+  <part id="P1">
+    <measure number="1">
+      <attributes>
+        <divisions>12</divisions>
+        <key><fifths>0</fifths></key>
+        <time><beats>4</beats><beat-type>4</beat-type></time>
+        <staves>2</staves>
+        <clef number="1"><sign>G</sign><line>2</line></clef>
+        <clef number="2"><sign>F</sign><line>4</line></clef>
+      </attributes>
+      <barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>
+      <direction placement="above"><direction-type><dynamics><mf/></dynamics></direction-type><staff>1</staff></direction>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><slur type="start" number="1"/></notations><lyric number="1"><syllabic>single</syllabic><text>La</text></lyric></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><slur type="stop" number="1"/></notations></note>
+      <note><pitch><step>C</step><octave>3</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><staff>2</staff></note>
+      <note><pitch><step>G</step><octave>2</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><staff>2</staff></note>
+    </measure>
+
+    <measure number="2">
+      <!-- 和弦（chord 元素）+ 琶音 -->
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><arpeggiate number="1"/></notations></note>
+      <note><chord/><pitch><step>E</step><octave>4</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><chord/><pitch><step>G</step><octave>4</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <!-- 跳音 / 断奏 -->
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>6</duration><voice>1</voice><type>eighth</type><staff>1</staff><notations><articulations><staccato/></articulations></notations></note>
+      <note><pitch><step>A</step><octave>4</octave></pitch><duration>6</duration><voice>1</voice><type>eighth</type><staff>1</staff><notations><articulations><staccatissimo/></articulations></notations></note>
+      <!-- 自由延长 -->
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>24</duration><voice>1</voice><type>half</type><staff>1</staff><notations><fermata/></notations></note>
+      <!-- 保持音 / 重音 -->
+      <note><pitch><step>F</step><octave>3</octave></pitch><duration>12</duration><voice>2</voice><type>quarter</type><staff>2</staff><notations><articulations><tenuto/></articulations></notations></note>
+      <note><pitch><step>A</step><octave>2</octave></pitch><duration>12</duration><voice>2</voice><type>quarter</type><staff>2</staff><notations><articulations><accent/></articulations></notations></note>
+      <note><pitch><step>D</step><octave>3</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><staff>2</staff></note>
+    </measure>
+
+    <measure number="3">
+      <!-- 连音线：2 音 1 tie（C4） + 3 音 2 tie（E4） -->
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>6</duration><tie type="start"/><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><pitch><step>C</step><octave>4</octave></pitch><duration>6</duration><tie type="stop"/><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>6</duration><tie type="start"/><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>6</duration><tie type="stop"/><tie type="start"/><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><pitch><step>E</step><octave>4</octave></pitch><duration>6</duration><tie type="stop"/><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <!-- 滑音 -->
+      <note><pitch><step>G</step><octave>4</octave></pitch><duration>6</duration><voice>1</voice><type>eighth</type><staff>1</staff><notations><glissando type="start" number="1" line-type="solid"/></notations></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>6</duration><voice>1</voice><type>eighth</type><staff>1</staff><notations><glissando type="stop" number="1" line-type="solid"/></notations></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>6</duration><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><pitch><step>C</step><octave>3</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><staff>2</staff></note>
+      <note><pitch><step>E</step><octave>3</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><staff>2</staff></note>
+      <barline location="right"><bar-style>light-heavy</bar-style><repeat direction="backward"/></barline>
+    </measure>
+
+    <!-- 反复第一段结尾 -->
+    <measure number="4">
+      <ending number="1" type="start"/>
+      <!-- 装饰音（倚音）+ 三连音 + 颤音 -->
+      <note><grace/><pitch><step>G</step><octave>4</octave></pitch><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><pitch><step>C</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><pitch><step>D</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>eighth</type><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes><normal-type>eighth</normal-type></time-modification><staff>1</staff><notations><tuplet type="start" number="1"/></notations></note>
+      <note><pitch><step>E</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>eighth</type><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes><normal-type>eighth</normal-type></time-modification><staff>1</staff></note>
+      <note><pitch><step>F</step><octave>5</octave></pitch><duration>4</duration><voice>1</voice><type>eighth</type><time-modification><actual-notes>3</actual-notes><normal-notes>2</normal-notes><normal-type>eighth</normal-type></time-modification><staff>1</staff><notations><tuplet type="stop" number="1"/></notations></note>
+      <note><pitch><step>G</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><ornaments><trill-mark/></ornaments></notations></note>
+      <note><pitch><step>E</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><pitch><step>C</step><octave>3</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><staff>2</staff><notations><articulations><tenuto/></articulations></notations></note>
+      <note><pitch><step>G</step><octave>2</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><staff>2</staff><notations><articulations><accent/></articulations></notations></note>
+      <ending number="1" type="stop"/>
+    </measure>
+
+    <!-- 反复第二段结尾：波音 / 回音 / 八度记号 / 踏板 / 多声部 backup-forward -->
+    <measure number="5">
+      <ending number="2" type="start"/>
+      <direction placement="below"><direction-type><octave-shift type="down" size="8"/></direction-type><staff>2</staff></direction>
+      <direction placement="below"><direction-type><pedal type="start"/></direction-type><staff>2</staff></direction>
+      <note><pitch><step>B</step><alter>-1</alter><octave>4</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><accidental>flat</accidental><staff>1</staff><notations><ornaments><mordent/></ornaments></notations></note>
+      <note><pitch><step>D</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><pitch><step>F</step><alter>1</alter><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><accidental>sharp</accidental><staff>1</staff><notations><ornaments><turn/></ornaments><articulations><marcato/></articulations></notations></note>
+      <note><pitch><step>A</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><pitch><step>B</step><alter>-1</alter><octave>2</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><accidental>flat</accidental><staff>2</staff></note>
+      <note><pitch><step>F</step><octave>3</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><staff>2</staff></note>
+      <!-- 多声部游标回退/前进 -->
+      <backup><duration>24</duration></backup>
+      <note><pitch><step>G</step><octave>3</octave></pitch><duration>24</duration><voice>2</voice><type>half</type><staff>2</staff></note>
+      <forward><duration>24</duration></forward>
+      <ending number="2" type="stop"/>
+    </measure>
+  </part>
+
+  <!-- ══════════ P2 打击乐（unpitched：无音高语义） ══════════ -->
+  <part id="P2">
+    <measure number="1">
+      <attributes><divisions>12</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>percussion</sign><line>2</line></clef></attributes>
+      <barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>
+      <note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>12</duration><instrument id="P2-I1"/><voice>1</voice><type>quarter</type><notehead>x</notehead><staff>1</staff></note>
+      <note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>6</duration><instrument id="P2-I1"/><voice>1</voice><type>eighth</type><notehead>x</notehead><staff>1</staff></note>
+      <note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>6</duration><instrument id="P2-I1"/><voice>1</voice><type>eighth</type><notehead>x</notehead><staff>1</staff></note>
+      <note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>24</duration><instrument id="P2-I1"/><voice>1</voice><type>half</type><notehead>x</notehead><staff>1</staff></note>
+    </measure>
+    <measure number="2">
+      <note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>24</duration><instrument id="P2-I1"/><voice>1</voice><type>half</type><notehead>x</notehead><staff>1</staff></note>
+      <note><rest/><duration>24</duration><voice>1</voice><type>half</type><staff>1</staff></note>
+    </measure>
+    <measure number="3">
+      <note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>12</duration><instrument id="P2-I1"/><voice>1</voice><type>quarter</type><notehead>x</notehead><staff>1</staff></note>
+      <note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>12</duration><instrument id="P2-I1"/><voice>1</voice><type>quarter</type><notehead>x</notehead><staff>1</staff></note>
+      <note><rest/><duration>24</duration><voice>1</voice><type>half</type><staff>1</staff></note>
+      <barline location="right"><bar-style>light-heavy</bar-style><repeat direction="backward"/></barline>
+    </measure>
+    <measure number="4">
+      <ending number="1" type="start"/>
+      <note><rest measure="yes"/><duration>48</duration><voice>1</voice><staff>1</staff></note>
+      <ending number="1" type="stop"/>
+    </measure>
+    <measure number="5">
+      <ending number="2" type="start"/>
+      <note><unpitched><display-step>C</display-step><display-octave>5</display-octave></unpitched><duration>12</duration><instrument id="P2-I1"/><voice>1</voice><type>quarter</type><notehead>x</notehead><staff>1</staff></note>
+      <note><rest/><duration>36</duration><voice>1</voice><staff>1</staff></note>
+      <ending number="2" type="stop"/>
+    </measure>
+  </part>
+
+  <!-- ══════════ P3 长笛（旋律 + 圆滑线 + 装饰音） ══════════ -->
+  <part id="P3">
+    <measure number="1">
+      <attributes><divisions>12</divisions><key><fifths>0</fifths></key><time><beats>4</beats><beat-type>4</beat-type></time><clef><sign>G</sign><line>2</line></clef></attributes>
+      <barline location="left"><bar-style>heavy-light</bar-style><repeat direction="forward"/></barline>
+      <note><grace/><pitch><step>B</step><octave>5</octave></pitch><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><pitch><step>G</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><slur type="start" number="1"/></notations></note>
+      <note><pitch><step>A</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><pitch><step>B</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><pitch><step>C</step><octave>6</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><slur type="stop" number="1"/></notations></note>
+    </measure>
+    <measure number="2">
+      <note><grace steal-time-previous="30"/><pitch><step>B</step><octave>5</octave></pitch><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><pitch><step>C</step><octave>6</octave></pitch><duration>24</duration><voice>1</voice><type>half</type><staff>1</staff></note>
+      <note><pitch><step>G</step><octave>5</octave></pitch><duration>24</duration><voice>1</voice><type>half</type><staff>1</staff></note>
+    </measure>
+    <measure number="3">
+      <note><pitch><step>E</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><tie type="start"/><notations><articulations><staccato/></articulations></notations></note>
+      <note><pitch><step>E</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><tie type="stop"/></note>
+      <note><pitch><step>F</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><articulations><staccato/></articulations></notations></note>
+      <note><pitch><step>G</step><octave>5</octave></pitch><duration>24</duration><voice>1</voice><type>half</type><staff>1</staff><notations><fermata/></notations></note>
+      <barline location="right"><bar-style>light-heavy</bar-style><repeat direction="backward"/></barline>
+    </measure>
+    <measure number="4">
+      <ending number="1" type="start"/>
+      <note><pitch><step>C</step><octave>6</octave></pitch><duration>48</duration><voice>1</voice><type>whole</type><staff>1</staff></note>
+      <ending number="1" type="stop"/>
+    </measure>
+    <measure number="5">
+      <ending number="2" type="start"/>
+      <note><pitch><step>D</step><octave>6</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff><notations><ornaments><trill-mark/></ornaments></notations></note>
+      <!-- 复倚音（前倚音串 2 音）：G5→A5 → 主音 C6 -->
+      <note><grace/><pitch><step>G</step><octave>5</octave></pitch><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><grace/><pitch><step>A</step><octave>5</octave></pitch><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><pitch><step>C</step><octave>6</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <!-- 后倚音串：主音 E6 → F6→G6 -->
+      <note><pitch><step>E</step><octave>6</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <note><grace/><pitch><step>F</step><octave>6</octave></pitch><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <note><grace/><pitch><step>G</step><octave>6</octave></pitch><voice>1</voice><type>eighth</type><staff>1</staff></note>
+      <!-- 主音 A5（先验证基础拓扑，和弦式倚音另行验证） -->
+      <note><pitch><step>A</step><octave>5</octave></pitch><duration>12</duration><voice>1</voice><type>quarter</type><staff>1</staff></note>
+      <ending number="2" type="stop"/>
+    </measure>
+  </part>
+</score-partwise>

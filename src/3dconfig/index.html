@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>星跃谱 LumiScore · 轨迹形状</title>
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" type="image/svg+xml" href="../../icons/lumiscore-favicon.svg" />
+  <link rel="stylesheet" href="../../shell-theme.css" />
+  <!-- 首屏这几件事必须内联（外链脚本和模块都要等整张依赖图下载求值完才执行）：
+       ① 主题/动效偏好：原来要等 JS 才写 data-theme，暗色用户必然先白闪一下再转暗；
+       ② data-boot='1'：让 public/shell-theme.css 里的令牌副本先顶着首帧，
+          外壳挂上后由 shell.ts 摘掉标记，副本自动退出层叠，不存在谁覆盖谁；
+       ③ 看门狗兜底：模块图过大、某个资源 404、任何一处抛错时，页面不能永远停在
+          「data-i18n 节点全是空、按钮没字」的骨架上，至少给一句人话和一个重试按钮；
+       ④ 装配看门狗：外壳挂上 ≠ 本页脚本跑完。模块顶层半途抛错时后半段根本不执行，
+          症状是「页面看着正常、下拉和面板全没了」，所以模块要走完顶层并调
+          __lumiReady()，没调到就把这条中断显式挂在页面上（各页 main.ts 末尾）。 -->
+  <script>
+    (function () {
+      var root = document.documentElement
+      root.dataset.boot = '1'
+      try {
+        var tm = localStorage.getItem('midee.theme') || 'system'
+        root.dataset.theme =
+          tm === 'dark' || (tm === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+            ? 'dark'
+            : 'light'
+        root.dataset.motion = localStorage.getItem('midee.motion') === 'reduced' ? 'reduced' : 'full'
+      } catch (e) {
+        /* 隐私模式读不到 localStorage：按默认亮色 */
+      }
+      var timer = 0
+      var box = null
+      // 装配看门狗：「外壳挂上了」不等于「本页脚本跑完了」。模块后半段一抛错就悄无声息
+      // 地不执行，症状是页面看着正常、下拉和面板全没了——只有本页自己知道装配是否结束，
+      // 所以约定模块顶层走完要调 __lumiReady()。没调到 = 初始化被中断。
+      var zh = true
+      try {
+        var saved = localStorage.getItem('midee.locale')
+        zh = saved ? saved.indexOf('zh') === 0 : (navigator.language || '').indexOf('zh') === 0
+      } catch (e) {
+        /* 默认中文 */
+      }
+      var asm = { ready: false, err: '', hushed: false }
+      window.__lumiAsm = asm
+      var L = zh
+        ? { head: '界面没能加载完成', sep: '：', tail: '，可能是网络或资源加载被打断。', retry: '重新加载', ignore: '暂不处理', res: '资源或脚本加载失败', async: '异步任务失败', timeout: '超时未就绪',
+            asm: '本页控件没能全部装上：页面脚本被一条错误中断，下拉和面板点了可能没反应。原因见下面那行，浏览器控制台（F12）里有完整堆栈。' }
+        : { head: 'The interface failed to load', sep: ': ', tail: '. The network or a resource may have been interrupted.', retry: 'Reload', ignore: 'Dismiss', res: 'A resource or script failed to load', async: 'An async task failed', timeout: 'Timed out before it was ready',
+            asm: 'Some controls on this page never got built: the page script was interrupted by an error, so dropdowns and panels may do nothing. The line below names the cause; the browser console (F12) has the full trace.' }
+      // e.target 是元素 → 资源 404（无关紧要）；是 window → 脚本运行时错误（真凶）
+      function isScriptErr(e) {
+        return !!(e && e.message && (!e.target || e.target === window))
+      }
+      function show(reason) {
+        if (box || root.dataset.topbar === 'expanded') return
+        box = document.createElement('div')
+        box.className = 'lumi-bootfail'
+        box.setAttribute('role', 'alert')
+        box.textContent = L.head + (reason ? L.sep + reason : '') + L.tail
+        var btn = document.createElement('button')
+        btn.type = 'button'
+        btn.textContent = L.retry
+        btn.addEventListener('click', function () {
+          location.reload()
+        })
+        box.appendChild(btn)
+        document.body.appendChild(box)
+      }
+      // 装配中断专用：不看 topbar，把错误原文摊开，给「重新加载」和「暂不处理」两个出口
+      function showAsm() {
+        if (asm.ready || asm.hushed || box) return
+        box = document.createElement('div')
+        box.className = 'lumi-bootfail lumi-bootfail--asm'
+        box.setAttribute('role', 'alert')
+        var p = document.createElement('div')
+        p.textContent = L.asm
+        box.appendChild(p)
+        if (asm.err) {
+          var d = document.createElement('div')
+          d.className = 'lumi-bootfail__err'
+          d.textContent = asm.err
+          box.appendChild(d)
+        }
+        var r = document.createElement('button')
+        r.type = 'button'
+        r.textContent = L.retry
+        r.addEventListener('click', function () {
+          location.reload()
+        })
+        var x = document.createElement('button')
+        x.type = 'button'
+        x.className = 'lumi-bootfail__x'
+        x.textContent = L.ignore
+        x.addEventListener('click', function () {
+          // 记下「暂不处理」：15s 那条兜底定时器不能再把横幅弹回来
+          asm.hushed = true
+          box.remove()
+          box = null
+        })
+        box.append(r, x)
+        document.body.appendChild(box)
+      }
+      // 报错先宽限 1.5s：无关资源 404 不该抢先把人吓一跳，外壳正常挂上就一笔勾销；
+      // 装配未完成时的脚本错误就是真凶，不等。
+      function suspect(reason, fatal) {
+        if (timer || box) return
+        timer = setTimeout(
+          function () {
+            timer = 0
+            if (fatal) showAsm()
+            else show(reason)
+          },
+          fatal ? 300 : 1500
+        )
+      }
+      // capture=true 才收得到 link/script 这类资源加载失败
+      addEventListener('error', function (e) {
+        var msg = e && e.message ? String(e.message).slice(0, 140) : ''
+        var fatal = isScriptErr(e) && !asm.ready
+        if (fatal && !asm.err) asm.err = msg
+        suspect(msg || L.res, fatal)
+      }, true)
+      addEventListener('unhandledrejection', function () {
+        suspect(L.async)
+      })
+      setTimeout(function () {
+        show(L.timeout)
+      }, 10000)
+      // 初始化卡住不报错（await 永不返回）也算装配失败，只是没有错误原文。
+      // 留 15s：dev 冷启动整张模块图可能就要十几秒，别抢跑。
+      setTimeout(function () {
+        showAsm()
+      }, 15000)
+      window.__lumiBooted = function () {
+        delete root.dataset.boot
+        if (timer) {
+          clearTimeout(timer)
+          timer = 0
+        }
+        // 装配中断的横幅不归外壳管：它说的是本页脚本没跑完，topbar 起来不代表控件装上了
+        if (box && !box.classList.contains('lumi-bootfail--asm')) {
+          box.remove()
+          box = null
+        }
+      }
+      // 由模块在顶层求值全部走完后调用（见各页 main.ts 末尾）
+      window.__lumiReady = function () {
+        asm.ready = true
+        if (box && box.classList.contains('lumi-bootfail--asm')) {
+          box.remove()
+          box = null
+        }
+      }
+    })()
+  </script>
+  <style>
+    .p3-card { width: min(620px, 100%); }
+    .p3-h {
+      margin: 22px 0 0;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--sh-faint);
+    }
+    .p3-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .p3-opt {
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      padding: 12px;
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r);
+      background: var(--sh-surface);
+      color: var(--sh-text);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: border-color var(--sh-dur) var(--sh-ease), background var(--sh-dur) var(--sh-ease);
+    }
+    .p3-opt:hover { border-color: var(--sh-accent); }
+    .p3-opt[aria-pressed='true'] {
+      border-color: var(--sh-accent);
+      background: var(--sh-accent-soft);
+    }
+    .p3-opt__name { font-size: 13px; font-weight: 600; }
+    .p3-opt__prev {
+      height: 46px;
+      display: grid;
+      place-items: center;
+      border-radius: var(--sh-r-sm);
+      background: var(--sh-surface-2);
+      color: var(--sh-accent);
+    }
+    .p3-opt__prev svg { width: 96px; height: 26px; display: block; }
+    .p3-opt__soon {
+      font-size: 10.5px;
+      color: var(--sh-faint);
+      letter-spacing: 0.02em;
+    }
+
+    .p3-soon {
+      margin: 26px 0 0;
+      padding: 18px 16px;
+      border: 1px dashed var(--sh-border);
+      border-radius: var(--sh-r);
+      background: var(--sh-surface);
+      text-align: center;
+    }
+    .p3-soon__t { font-size: 14px; font-weight: 650; color: var(--sh-text); }
+    .p3-soon__d { margin-top: 6px; font-size: 12.5px; line-height: 1.7; color: var(--sh-muted); }
+    .p3-soon__bar {
+      margin: 14px auto 0;
+      width: 180px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--sh-surface-2);
+      overflow: hidden;
+    }
+    .p3-soon__bar > i {
+      display: block;
+      height: 100%;
+      width: 100%;
+      background: var(--sh-accent);
+      transform-origin: left center;
+      animation: p3-countdown 2.5s linear forwards;
+    }
+    @keyframes p3-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+    @media (prefers-reduced-motion: reduce) { .p3-soon__bar > i { animation: none; } }
+
+    .p3-warn {
+      margin-top: 14px;
+      padding: 9px 12px;
+      border: 1px solid var(--sh-danger);
+      border-radius: var(--sh-r-sm);
+      background: var(--sh-surface);
+      color: var(--sh-danger);
+      font-size: 12.5px;
+    }
+    @supports (background: color-mix(in srgb, red, blue)) {
+      .p3-warn {
+        border-color: color-mix(in srgb, var(--sh-danger) 40%, transparent);
+        background: color-mix(in srgb, var(--sh-danger) 8%, transparent);
+      }
+    }
+    .p3-warn[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <main class="sh-page sh-center">
+    <section class="sh-card p3-card">
+      <h1 class="sh-h1" data-i18n="p3.title"></h1>
+      <p class="sh-sub" data-i18n="p3.sub"></p>
+
+      <div class="p3-warn" id="warn" hidden data-i18n="p3.warn"></div>
+
+      <h2 class="p3-h" data-i18n="p3.traj"></h2>
+      <div class="p3-grid" id="trajs"></div>
+
+      <div class="p3-soon">
+        <div class="p3-soon__t" data-i18n="p3.soon.t"></div>
+        <div class="p3-soon__d" data-i18n="p3.soon.d"></div>
+        <div class="p3-soon__bar"><i></i></div>
+      </div>
+
+      <div class="sh-foot">
+        <button class="sh-btn" id="prev" type="button" data-i18n="p3.prev"></button>
+        <div class="sh-spacer"></div>
+        <button class="sh-btn sh-btn--primary" id="next" type="button" data-i18n="p3.next"></button>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

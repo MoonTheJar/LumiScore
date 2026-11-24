@@ -1,0 +1,8 @@
+index.html -> ERR 405
+shell.css -> 200
+test.css -> 200
+compat.js -> ERR 404
+toy-sdk.js -> 200
+export-test.js -> ERR 404
+test.js -> 200
+icons/lumiscore-logo.svg -> 200

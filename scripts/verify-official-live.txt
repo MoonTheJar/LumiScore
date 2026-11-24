@@ -1,0 +1,6 @@
+password gate -> submitting
+frames: https://www.bilibili.com/toy/lumiscore-sdk-test/index.html | https://www.bilibilitoy.com/toy/lumiscore-sdk-test/51035314058240-v39898/index.html?_tk=MT
+toy frame URL: https://www.bilibilitoy.com/toy/lumiscore-sdk-test/51035314058240-v39898/index.html?_tk=MTc5Mzc3OTYxNA.f23068d6f7f74b02efa09458a6c4b1e38ac34
+toy frame info: {"diagVisible":true,"mode":"prod","inner":"390x800","topbarH":69,"bootCompat":true,"bootToy":true,"setPage":true,"bootExport":true}
+after enter: {"diagGone":true,"topbarH":69,"pageNum":"1","title":"示例曲.mid","stepLabel":"导入","hasDiag":true}
+errors: (none)

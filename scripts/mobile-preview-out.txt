@@ -1,0 +1,11 @@
+mobile iframe: {
+  "mode": "prod",
+  "innerW": 393,
+  "innerH": 683,
+  "toy": "object",
+  "controls": "none",
+  "diag": "none",
+  "testCard": "none",
+  "viewport": "none"
+}
+errors: (none)

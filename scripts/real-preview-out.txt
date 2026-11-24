@@ -1,0 +1,23 @@
+frame nav: https://www.bilibili.com/toy/preview/author_fsZhkOwm/index.html
+frame nav: https://www.bilibilitoy.com/toy/preview/author_fsZhkOwm/index.html
+frame nav: https://s1.hdslb.com/bfs/seed/jinkela/short/cols/iframe.html
+frames: [
+  {
+    "url": "https://www.bilibili.com/toy/preview/author_fsZhkOwm/index.html",
+    "isMain": true
+  },
+  {
+    "url": "https://www.bilibilitoy.com/toy/preview/author_fsZhkOwm/index.html",
+    "isMain": false
+  }
+]
+iframe state: {
+  "mode": "prod",
+  "html": "\n  <script>\n    // 页面模式：prod=正式外观（隐藏所有测试/调试控件）/ test=完整测试模式\n    // 切换入口：连点左上角 logo 5 次（compat.js 内实现）；URL 带 ?test=1 也可直接进入测试模式\n    (function () {\n      var m = 'prod'\n      try {\n        if (location.search.indexOf('test=1') >= 0 || localStorage.getItem('toyTestMode') === '1') m = 'test'\n      } cat",
+  "toy": "object",
+  "hasControls": true,
+  "hasDiag": true,
+  "testCard": "none"
+}
+iframe eval failed: f.screenshot is not a function
+errors: (none)

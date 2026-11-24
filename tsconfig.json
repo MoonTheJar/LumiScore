@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vite/client"],
+    "outDir": "dist",
+    "rootDir": "src",
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js"
+  },
+  "include": [
+    "src/import",
+    "src/2dpreview",
+    "src/3dconfig",
+    "src/3dpreview",
+    "src/3dtest",
+    "src/balltest",
+    "src/bench",
+    "src/shared",
+    "src/shell",
+    "src/types/verovio.d.ts"
+  ],
+  "exclude": ["src/test"]
+}

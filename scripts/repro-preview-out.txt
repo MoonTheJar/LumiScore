@@ -1,0 +1,23 @@
+DIAG: {
+  "scripts": [
+    "(inline)",
+    "https://s1.hdslb.com/bfs/seed/jinkela/short/reporter-pb/index.js",
+    "(inline)",
+    "https://s1.hdslb.com/bfs/seed/toy/app/sdk/toy-host.js",
+    "https://s1.hdslb.com/bfs/seed/toy/app/addon/index.js",
+    "https://s1.hdslb.com/bfs/seed/jinkela/short/minntaki-wasm-sdk/bili-sc-sdk.umd.js"
+  ],
+  "hasSetPage": "undefined",
+  "readyState": "complete",
+  "testJs": false,
+  "compatJs": false,
+  "toy": "object"
+}
+errors so far: (none)
+FATAL page.evaluate: ReferenceError: setPage is not defined
+    at eval (eval at evaluate (:303:30), <anonymous>:1:11)
+    at UtilityScript.evaluate (<anonymous>:305:16)
+    at UtilityScript.<anonymous> (<anonymous>:1:44)
+    at D:\乐谱可视化\新建文件夹\scripts\repro-old-kernel.cjs:82:16 {
+  log: []
+}

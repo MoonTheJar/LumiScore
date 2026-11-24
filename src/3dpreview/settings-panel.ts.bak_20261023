@@ -1,0 +1,777 @@
+// ── 第 5 页悬浮设置窗 v3：左右分栏 ─────────────────────────────
+// 左列：分类树（材质 / 光照 / 辅助线 / 拖尾 / 水面 / 视野）
+// 右列：
+//   · 材质页：上方对象 tabs（乐谱 / 背景 / 小球），每组独立的
+//     [预设|网络贴图] 来源、材质下拉（预设或已下载贴图）、颜色着色与物理参数——
+//     三组互不冲突，改背景不会影响乐谱纹理
+//   · 光照页：影棚光照（环境光/主光颜色强度位置）与全局光照（无光源纯 IBL）两模式
+//   · 水面页：水面属于背景组，跟随地面一起被视野管理
+//   · 视野页：渲染半径（全元素统一按 x 区间裁剪）
+import { createFloatingWindow } from "../shell/floating";
+import {
+	type AnyPreset,
+	isGlassPreset,
+	type MatObject,
+	type MatTune,
+	type ObjMatConfig,
+	presetDefaultTune,
+	SCORE_BALL_OPTIONS,
+	SURFACE_OPTIONS,
+} from "./materials3d";
+import { fetchTextureList, mapUrl as phMapUrl } from "./polyhaven";
+
+export type ArcStyle = "solid" | "dashed" | "none";
+export type TrajShape = "parabola" | "line";
+
+/** 光照设置：studio = 环境光 + 主光；ibl = 无光源纯环境贴图照明 */
+export interface LightSettings {
+	mode: "studio" | "ibl";
+	ambient: number;
+	ambientColor: number;
+	keyColor: number;
+	keyIntensity: number;
+	keyAzimuth: number;
+	keyElevation: number;
+	env: number;
+}
+
+/** 一条辅助线的样式（线形 / 透明度 / 颜色） */
+export interface GuideLineStyle {
+	style: ArcStyle;
+	opacity: number;
+	color: number;
+	followTrack?: boolean; // 仅轨迹线：颜色跟随各轨道配色
+}
+
+/** 与 main.ts 的 Surf3DSettings 保持结构一致（共用一份状态对象） */
+export interface SurfSettings {
+	viewRadius: number;
+	mat: Record<"score" | "ground" | "ball", ObjMatConfig>;
+	matTune: Record<"score" | "ground" | "ball", MatTune>;
+	selectedObject: MatObject | "sky";
+	ballGlow: number;
+	litGlow: number;
+	lighting: LightSettings;
+	waterOn: boolean;
+	waterAmp: number;
+	waterSpeed: number;
+	waterWaveLen: number;
+	waterColor: number;
+	trajShape: TrajShape;
+	jumpHeight: number;
+	trackLine: GuideLineStyle;
+	startLine: GuideLineStyle;
+	endLine: GuideLineStyle;
+	trailPct: number;
+	trailIntensity: number;
+}
+
+export interface SettingsPanelHandle {
+	el: HTMLElement;
+	refresh(): void;
+}
+
+// ── 已下载网络贴图登记表（模块级：跨页内重渲、localStorage 持久化） ──
+// 下载完成后贴图进入此表 → 出现在所有对象组的「网络贴图」下拉里可选。
+const TEX_KEY = "midee.tex.downloaded";
+const downloadedTex = new Map<string, string>(); // id → 名称
+try {
+	const arr = JSON.parse(localStorage.getItem(TEX_KEY) ?? "[]") as [
+		string,
+		string,
+	][];
+	for (const [id, name] of arr) downloadedTex.set(id, name);
+} catch {
+	/* noop */
+}
+function persistDownloadedTex(): void {
+	try {
+		localStorage.setItem(TEX_KEY, JSON.stringify([...downloadedTex]));
+	} catch {
+		/* noop */
+	}
+}
+function registerDownloadedTex(id: string, name: string): void {
+	if (downloadedTex.has(id)) return;
+	downloadedTex.set(id, name);
+	persistDownloadedTex();
+}
+
+// ── 小控件工厂 ────────────────────────────────────────────────
+function row(label: string, control: HTMLElement): HTMLElement {
+	const r = document.createElement("div");
+	r.className = "sp-row";
+	const s = document.createElement("span");
+	s.textContent = label;
+	r.append(s, control);
+	return r;
+}
+function slider(
+	min: number,
+	max: number,
+	step: number,
+	value: number,
+	onInput: (v: number) => void,
+): HTMLInputElement {
+	const el = document.createElement("input");
+	el.type = "range";
+	el.min = String(min);
+	el.max = String(max);
+	el.step = String(step);
+	el.value = String(value);
+	el.addEventListener("input", () => onInput(Number(el.value)));
+	return el;
+}
+function colorInput(
+	hex: number,
+	onInput: (hex: number) => void,
+): HTMLInputElement {
+	const el = document.createElement("input");
+	el.type = "color";
+	el.value = `#${hex.toString(16).padStart(6, "0")}`;
+	el.addEventListener("input", () => onInput(parseInt(el.value.slice(1), 16)));
+	return el;
+}
+function checkbox(
+	checked: boolean,
+	onInput: (v: boolean) => void,
+): HTMLInputElement {
+	const el = document.createElement("input");
+	el.type = "checkbox";
+	el.checked = checked;
+	el.addEventListener("change", () => onInput(el.checked));
+	return el;
+}
+function subhead(text: string): HTMLElement {
+	const h = document.createElement("div");
+	h.className = "sp-subhead";
+	h.textContent = text;
+	return h;
+}
+function note(text: string): HTMLElement {
+	const n = document.createElement("div");
+	n.className = "sp-note";
+	n.textContent = text;
+	return n;
+}
+
+export function createSettingsPanel(
+	settings: SurfSettings,
+	onChange: (patch: Partial<SurfSettings>) => void,
+): SettingsPanelHandle {
+	const host = document.createElement("div");
+	host.className = "sp-host sp-host--wide";
+
+	const win = createFloatingWindow({
+		storageKey: "midee.float.surf3d",
+		host,
+		ariaLabel: "3D 设置",
+		anchor: {
+			x: Math.max(60, window.innerWidth - 600),
+			y: Math.max(70, (window.innerHeight - 560) / 2),
+		},
+	});
+
+	// ── 标题行 ──
+	const head = document.createElement("div");
+	head.className = "sp-head";
+	const title = document.createElement("strong");
+	title.textContent = "3D 场景设置";
+	head.append(win.grip, title, win.pinBtn, win.closeBtn);
+
+	// ── 左右分栏骨架 ──
+	const split = document.createElement("div");
+	split.className = "sp-split";
+
+	// 左列：分类树
+	const nav = document.createElement("div");
+	nav.className = "sp-nav";
+	const NAV_ITEMS: { id: string; label: string }[] = [
+		{ id: "material", label: "材质" },
+		{ id: "light", label: "光照" },
+		{ id: "guide", label: "辅助线" },
+		{ id: "trail", label: "拖尾" },
+		{ id: "water", label: "水面" },
+		{ id: "view", label: "视野" },
+	];
+	const navBtns: Record<string, HTMLButtonElement> = {};
+	for (const it of NAV_ITEMS) {
+		const b = document.createElement("button");
+		b.type = "button";
+		b.className = "sp-nav__btn";
+		b.textContent = it.label;
+		b.addEventListener("click", () => showPage(it.id));
+		nav.append(b);
+		navBtns[it.id] = b;
+	}
+
+	// 右列：内容区
+	const content = document.createElement("div");
+	content.className = "sp-content";
+
+	split.append(nav, content);
+	host.append(head, split);
+
+	// ── 页面切换 ──
+	function showPage(id: string): void {
+		for (const k of Object.keys(navBtns))
+			navBtns[k]!.classList.toggle("sp-nav__btn--on", k === id);
+		content.textContent = "";
+		if (id === "material") renderMaterialPage(content);
+		else if (id === "light") renderLightPage(content);
+		else if (id === "guide") renderGuidePage(content);
+		else if (id === "trail") renderTrailPage(content);
+		else if (id === "water") renderWaterPage(content);
+		else if (id === "view") renderViewPage(content);
+	}
+
+	// ── 材质页：上方对象 tabs（每组配置独立保存），下方调节区 ──
+	function renderMaterialPage(root: HTMLElement): void {
+		root.textContent = ""; // 切换对象 tab 会重渲本页；先清空，避免控件被重复追加
+		// 对象选择 tabs
+		const objTabs = document.createElement("div");
+		objTabs.className = "sp-objtabs";
+		const OBJ_ITEMS: {
+			id: MatObject | "sky";
+			label: string;
+			soon?: boolean;
+		}[] = [
+			{ id: "score", label: "乐谱" },
+			{ id: "ground", label: "背景" },
+			{ id: "ball", label: "小球" },
+			{ id: "sky", label: "天空", soon: true },
+		];
+		for (const o of OBJ_ITEMS) {
+			const b = document.createElement("button");
+			b.type = "button";
+			b.className = "sp-objtab";
+			b.textContent = o.label;
+			if (o.soon) {
+				b.disabled = true;
+				b.style.opacity = "0.4";
+				b.title = "暂未开放";
+			} else if (settings.selectedObject === o.id)
+				b.classList.add("sp-objtab--on");
+			b.addEventListener("click", () => {
+				onChange({ selectedObject: o.id });
+				renderMaterialPage(root);
+			});
+			objTabs.append(b);
+		}
+		root.append(objTabs);
+
+		const obj = settings.selectedObject;
+		if (obj !== "score" && obj !== "ground" && obj !== "ball") {
+			root.append(note("该对象暂未开放。"));
+			return;
+		}
+		const cfg = settings.mat[obj];
+
+		// 组内小补丁：改 ObjMatConfig 的一个字段
+		const patchCfg = (over: Partial<ObjMatConfig>): void => {
+			onChange({ mat: { ...settings.mat, [obj]: { ...cfg, ...over } } });
+		};
+
+		// [预设|网络贴图] 切换
+		const srcRow = document.createElement("div");
+		srcRow.className = "sp-srcrow";
+		const presetBtn = document.createElement("button");
+		presetBtn.type = "button";
+		presetBtn.className =
+			"sp-srcbtn" + (cfg.source === "preset" ? " sp-srcbtn--on" : "");
+		presetBtn.textContent = "预设";
+		const netBtn = document.createElement("button");
+		netBtn.type = "button";
+		netBtn.className =
+			"sp-srcbtn" + (cfg.source === "network" ? " sp-srcbtn--on" : "");
+		netBtn.textContent = "网络贴图";
+		presetBtn.addEventListener("click", () => {
+			patchCfg({ source: "preset" });
+			renderMaterialPage(root);
+		});
+		netBtn.addEventListener("click", () => {
+			patchCfg({ source: "network" });
+			renderMaterialPage(root);
+		});
+		srcRow.append(presetBtn, netBtn);
+		root.append(srcRow);
+
+		// 下方调节区
+		const adj = document.createElement("div");
+		adj.className = "sp-adj";
+
+		if (cfg.source === "preset") {
+			// 预设下拉（每组独立；背景无玻璃、乐谱/小球可玻璃）
+			const opts = obj === "ground" ? SURFACE_OPTIONS : SCORE_BALL_OPTIONS;
+			const sel = document.createElement("select");
+			for (const o of opts) {
+				const op = document.createElement("option");
+				op.value = o.value;
+				op.textContent = o.label;
+				if (o.value === cfg.preset) op.selected = true;
+				sel.append(op);
+			}
+			sel.addEventListener("change", () => {
+				const v = sel.value as AnyPreset;
+				// 切换预设时把该组的物理参数重置为预设默认值，并重渲滑杆区
+				onChange({
+					mat: { ...settings.mat, [obj]: { ...cfg, preset: v } },
+					matTune: { ...settings.matTune, [obj]: presetDefaultTune(v) },
+				});
+				renderMaterialPage(root);
+			});
+			adj.append(row("材质", sel));
+		} else {
+			// 网络贴图：已下载贴图下拉（下载完成即出现在所有对象组）+「下载更多…」展开下载列表
+			if (!downloadedTex.size) {
+				adj.append(
+					note("还没有已下载的网络贴图，点下方「下载更多贴图…」先下载一个。"),
+				);
+			} else {
+				const sel = document.createElement("select");
+				for (const [id, name] of downloadedTex) {
+					const op = document.createElement("option");
+					op.value = id;
+					op.textContent = name;
+					if (id === cfg.tex) op.selected = true;
+					sel.append(op);
+				}
+				sel.addEventListener("change", () => {
+					patchCfg({ tex: sel.value });
+					renderMaterialPage(root);
+				});
+				adj.append(row("贴图", sel));
+			}
+			const moreBtn = document.createElement("button");
+			moreBtn.type = "button";
+			moreBtn.className = "sp-morebtn";
+			moreBtn.textContent = "下载更多贴图…";
+			const listBox = document.createElement("div");
+			listBox.className = "sp-texlist";
+			listBox.style.display = "none";
+			const dlNote = note("");
+			moreBtn.addEventListener("click", () => {
+				listBox.style.display =
+					listBox.style.display === "none" ? "block" : "none";
+				if (listBox.style.display === "block" && !listBox.childElementCount)
+					void loadTextureDownloadList(listBox, dlNote, root);
+			});
+			adj.append(row("", moreBtn), listBox, dlNote);
+		}
+
+		// 颜色着色（自由度：每组底色可调；小球颜色跟随轨道色，不提供底色）
+		if (obj !== "ball") {
+			const curColor = cfg.color ?? 0xffffff;
+			adj.append(
+				row(
+					"底色",
+					colorInput(curColor, (hex) => patchCfg({ color: hex })),
+				),
+			);
+			const resetBtn = document.createElement("button");
+			resetBtn.type = "button";
+			resetBtn.className = "sp-morebtn";
+			resetBtn.textContent = "恢复默认底色";
+			resetBtn.addEventListener("click", () => {
+				patchCfg({ color: null });
+				renderMaterialPage(root);
+			});
+			adj.append(row("", resetBtn));
+		}
+		if (obj === "score") {
+			const curInk = cfg.inkColor ?? 0x1a1a1a;
+			adj.append(
+				row(
+					"音符颜色",
+					colorInput(curInk, (hex) => patchCfg({ inkColor: hex })),
+				),
+			);
+			const inkReset = document.createElement("button");
+			inkReset.type = "button";
+			inkReset.className = "sp-morebtn";
+			inkReset.textContent = "恢复默认音符色";
+			inkReset.addEventListener("click", () => {
+				patchCfg({ inkColor: null });
+				renderMaterialPage(root);
+			});
+			adj.append(row("", inkReset));
+		}
+
+		// 物理参数：按材质类型自洽显示；值按当前对象独立保存（乐谱/背景/小球互不串扰）
+		const tune = settings.matTune[obj];
+		const patchTune = (over: Partial<MatTune>): void =>
+			onChange({
+				matTune: { ...settings.matTune, [obj]: { ...tune, ...over } },
+			});
+		if (!isGlassPreset(cfg.preset)) {
+			adj.append(
+				row(
+					"粗糙度",
+					slider(0, 1, 0.01, tune.rough, (v) => patchTune({ rough: v })),
+				),
+			);
+			adj.append(
+				row(
+					"金属度",
+					slider(0, 1, 0.01, tune.metal, (v) => patchTune({ metal: v })),
+				),
+			);
+		} else {
+			adj.append(
+				row(
+					"透明度",
+					slider(0, 1, 0.01, tune.trans, (v) => patchTune({ trans: v })),
+				),
+			);
+		}
+		if (obj === "ball") {
+			adj.append(
+				row(
+					"发光强度",
+					slider(0, 3, 0.05, settings.ballGlow, (v) =>
+						onChange({ ballGlow: v }),
+					),
+				),
+			);
+		}
+		if (obj === "score") {
+			adj.append(
+				row(
+					"点亮发光",
+					slider(0, 2, 0.05, settings.litGlow, (v) => onChange({ litGlow: v })),
+				),
+			);
+		}
+		root.append(adj);
+	}
+
+	/** 拉取 Poly Haven 列表渲染下载 UI；下载完成 → 登记 + 刷新下拉 */
+	async function loadTextureDownloadList(
+		listBox: HTMLElement,
+		dlNote: HTMLElement,
+		root: HTMLElement,
+	): Promise<void> {
+		listBox.textContent = "";
+		dlNote.textContent = "加载贴图列表…";
+		try {
+			const list = await fetchTextureList();
+			listBox.textContent = "";
+			dlNote.textContent = "";
+			for (const a of list) {
+				const rowEl = document.createElement("div");
+				rowEl.className = "sp-texrow";
+				const nameEl = document.createElement("span");
+				nameEl.className =
+					"sp-texrow__name" +
+					(downloadedTex.has(a.id) ? " sp-texrow__name--ready" : "");
+				nameEl.textContent = a.name;
+				nameEl.title = a.categories.join(" / ");
+				const dlBtn = document.createElement("button");
+				if (downloadedTex.has(a.id)) {
+					dlBtn.style.visibility = "hidden";
+				} else {
+					dlBtn.type = "button";
+					dlBtn.className = "sp-texrow__dl";
+					dlBtn.textContent = "↓";
+					dlBtn.title = "下载贴图";
+					dlBtn.addEventListener("click", () => {
+						dlBtn.classList.add("sp-texrow__dl--busy");
+						dlBtn.textContent = "";
+						// 预载三张贴图（diff/nor/rough）确认可用；任一通道 404 都视为失败
+						const must200 = async (u: string): Promise<void> => {
+							const r = await fetch(u);
+							if (!r.ok) throw new Error("HTTP " + r.status);
+						};
+						Promise.all([
+							must200(phMapUrl(a.id, "diff")),
+							must200(phMapUrl(a.id, "nor_gl")),
+							must200(phMapUrl(a.id, "rough")),
+						])
+							.then(() => {
+								registerDownloadedTex(a.id, a.name);
+								dlBtn.remove();
+								nameEl.classList.add("sp-texrow__name--ready");
+								dlNote.textContent = `「${a.name}」已就绪，在上方下拉选择即可应用到当前对象。`;
+								renderMaterialPage(root); // 刷新网络贴图下拉
+							})
+							.catch(() => {
+								dlBtn.classList.remove("sp-texrow__dl--busy");
+								dlBtn.textContent = "↓";
+							});
+					});
+				}
+				rowEl.append(nameEl, dlBtn);
+				listBox.append(rowEl);
+			}
+		} catch (e) {
+			listBox.textContent = "";
+			dlNote.textContent = "网络加载失败：" + (e as Error).message;
+		}
+	}
+
+	// ── 光照页：影棚光照（环境光/主光）与全局光照（无光源 IBL） ──
+	function renderLightPage(root: HTMLElement): void {
+		root.textContent = ""; // 方案切换会重渲本页；先清空避免控件重复追加
+		const L = settings.lighting;
+		const patch = (over: Partial<LightSettings>): void =>
+			onChange({ lighting: { ...L, ...over } });
+		const modeSel = document.createElement("select");
+		for (const [v, l] of [
+			["studio", "影棚光照（环境光 + 主光）"],
+			["ibl", "全局光照（无光源 · 纯环境）"],
+		] as const) {
+			const op = document.createElement("option");
+			op.value = v;
+			op.textContent = l;
+			if (v === L.mode) op.selected = true;
+			modeSel.append(op);
+		}
+		modeSel.addEventListener("change", () => {
+			patch({ mode: modeSel.value as LightSettings["mode"] });
+			renderLightPage(root);
+		});
+		root.append(row("光照方案", modeSel));
+		// 环境反射强度两种方案通用（IBL 模式下即整体亮度）
+		root.append(
+			row(
+				"环境亮度",
+				slider(0, 3, 0.05, L.env, (v) => patch({ env: v })),
+			),
+		);
+		if (L.mode === "ibl") {
+			root.append(
+				note(
+					"无光源方案：关闭所有直射光，只靠环境贴图（IBL）均匀照明，" +
+						"适合金属/玻璃等反射材质，调「环境亮度」控制整体曝光。",
+				),
+			);
+			return;
+		}
+		root.append(
+			row(
+				"环境光强度",
+				slider(0, 2, 0.05, L.ambient, (v) => patch({ ambient: v })),
+			),
+		);
+		root.append(
+			row(
+				"环境光颜色",
+				colorInput(L.ambientColor, (hex) => patch({ ambientColor: hex })),
+			),
+		);
+		root.append(subhead("主光（平行光）"));
+		root.append(
+			row(
+				"强度",
+				slider(0, 3, 0.05, L.keyIntensity, (v) => patch({ keyIntensity: v })),
+			),
+		);
+		root.append(
+			row(
+				"颜色",
+				colorInput(L.keyColor, (hex) => patch({ keyColor: hex })),
+			),
+		);
+		root.append(
+			row(
+				"方位角",
+				slider(0, 360, 5, L.keyAzimuth, (v) => patch({ keyAzimuth: v })),
+			),
+		);
+		root.append(
+			row(
+				"仰角",
+				slider(10, 85, 1, L.keyElevation, (v) => patch({ keyElevation: v })),
+			),
+		);
+	}
+
+	// ── 辅助线页：轨迹形状/跳动高度 + 轨迹线/起点线/终点线三块样式 ──
+	function renderGuidePage(root: HTMLElement): void {
+		root.textContent = ""; // 勾选状态切换会重渲本页；先清空避免控件重复追加
+		// 轨迹形状
+		const shapeSel = document.createElement("select");
+		for (const [v, l] of [
+			["parabola", "抛物线跳动"],
+			["line", "直线（不跳）"],
+		] as const) {
+			const op = document.createElement("option");
+			op.value = v;
+			op.textContent = l;
+			if (v === settings.trajShape) op.selected = true;
+			shapeSel.append(op);
+		}
+		shapeSel.addEventListener("change", () =>
+			onChange({ trajShape: shapeSel.value as TrajShape }),
+		);
+		root.append(row("轨迹形状", shapeSel));
+		// 跳动高度：弧高相对端点距离的比例（0=不跳，越大跳越高）
+		root.append(
+			row(
+				"跳动高度",
+				slider(0, 1.5, 0.05, settings.jumpHeight, (v) =>
+					onChange({ jumpHeight: v }),
+				),
+			),
+		);
+
+		// 一条辅助线的样式块：线形 + 透明度 + 颜色（轨迹线可跟随轨道配色）
+		const lineBlock = (
+			title: string,
+			key: "trackLine" | "startLine" | "endLine",
+		): HTMLElement => {
+			const box = document.createElement("div");
+			box.className = "sp-lineblk";
+			box.append(subhead(title));
+			const g = settings[key];
+			const patchLine = (over: Partial<GuideLineStyle>): void => {
+				const merged = { ...g, ...over };
+				if (key === "trackLine") onChange({ trackLine: merged });
+				else if (key === "startLine") onChange({ startLine: merged });
+				else onChange({ endLine: merged });
+			};
+			const styleSel = document.createElement("select");
+			for (const [v, l] of [
+				["solid", "实线"],
+				["dashed", "虚线"],
+				["none", "隐藏"],
+			] as const) {
+				const op = document.createElement("option");
+				op.value = v;
+				op.textContent = l;
+				if (v === g.style) op.selected = true;
+				styleSel.append(op);
+			}
+			styleSel.addEventListener("change", () =>
+				patchLine({ style: styleSel.value as ArcStyle }),
+			);
+			box.append(row("线形", styleSel));
+			box.append(
+				row(
+					"透明度",
+					slider(0, 1, 0.05, g.opacity, (v) => patchLine({ opacity: v })),
+				),
+			);
+			if (key === "trackLine") {
+				const follow = checkbox(g.followTrack !== false, (c) => {
+					onChange({ trackLine: { ...g, followTrack: c } });
+					renderGuidePage(root); // 勾选状态切换后刷新颜色行
+				});
+				box.append(row("跟随轨道色", follow));
+				if (g.followTrack === false) {
+					box.append(
+						row(
+							"颜色",
+							colorInput(g.color, (hex) =>
+								onChange({ trackLine: { ...g, color: hex } }),
+							),
+						),
+					);
+				}
+			} else {
+				box.append(
+					row(
+						"颜色",
+						colorInput(g.color, (hex) => patchLine({ color: hex })),
+					),
+				);
+			}
+			return box;
+		};
+		root.append(lineBlock("轨迹线（小球轨迹，与拖尾无关）", "trackLine"));
+		root.append(lineBlock("起点线", "startLine"));
+		root.append(lineBlock("终点线", "endLine"));
+	}
+
+	// ── 拖尾页（小球运动残影，与轨迹线相互独立） ──
+	function renderTrailPage(root: HTMLElement): void {
+		root.textContent = "";
+		root.append(
+			row(
+				"拖尾长度 %",
+				slider(0, 200, 5, settings.trailPct, (v) => onChange({ trailPct: v })),
+			),
+		);
+		root.append(
+			row(
+				"拖尾强度",
+				slider(0, 2, 0.05, settings.trailIntensity, (v) =>
+					onChange({ trailIntensity: v }),
+				),
+			),
+		);
+	}
+
+	// ── 水面页（水面属于背景组，与地面一起跟随视野） ──
+	function renderWaterPage(root: HTMLElement): void {
+		root.textContent = "";
+		root.append(
+			note(
+				"水面属于背景组：与地面同进退、跟随相机焦点，不受乐谱/小球材质影响。",
+			),
+		);
+		const chk = document.createElement("input");
+		chk.type = "checkbox";
+		chk.checked = settings.waterOn;
+		chk.addEventListener("change", () => onChange({ waterOn: chk.checked }));
+		root.append(row("启用", chk));
+		root.append(
+			row(
+				"颜色",
+				colorInput(settings.waterColor, (hex) => onChange({ waterColor: hex })),
+			),
+		);
+		root.append(
+			row(
+				"波幅",
+				slider(0, 0.1, 0.005, settings.waterAmp, (v) =>
+					onChange({ waterAmp: v }),
+				),
+			),
+		);
+		root.append(
+			row(
+				"速度",
+				slider(0, 3, 0.05, settings.waterSpeed, (v) =>
+					onChange({ waterSpeed: v }),
+				),
+			),
+		);
+		root.append(
+			row(
+				"波长",
+				slider(0.3, 4, 0.05, settings.waterWaveLen, (v) =>
+					onChange({ waterWaveLen: v }),
+				),
+			),
+		);
+	}
+
+	// ── 视野页：渲染半径（全部元素组统一裁剪） ──
+	function renderViewPage(root: HTMLElement): void {
+		root.textContent = "";
+		root.append(
+			row(
+				"渲染半径",
+				slider(2, 40, 0.5, settings.viewRadius, (v) =>
+					onChange({ viewRadius: v }),
+				),
+			),
+		);
+		root.append(
+			note(
+				"以相机焦点为中心，半径内的乐谱元素/小球/轨迹线可见，" +
+					"地面与水面在半径外平滑淡出。调大半径显示更多谱面。",
+			),
+		);
+	}
+
+	showPage("material");
+
+	return {
+		el: win.root,
+		refresh() {
+			showPage("material");
+		},
+	};
+}

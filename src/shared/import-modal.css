@@ -1,0 +1,222 @@
+/* 导入处理弹窗：进度步骤 + 可折叠日志（4 栏分级）+ 底部提示语/继续取消 */
+.imp-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: color-mix(in srgb, #05070d 42%, transparent);
+  backdrop-filter: blur(3px);
+}
+.imp-card {
+  width: min(560px, 100%);
+  max-height: min(86vh, 720px);
+  display: flex;
+  flex-direction: column;
+  background: var(--sh-surface);
+  border: 1px solid var(--sh-border);
+  border-radius: var(--sh-r-lg, 16px);
+  box-shadow: var(--sh-shadow-2, 0 18px 50px rgba(0, 0, 0, 0.35));
+  overflow: hidden;
+}
+.imp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px 10px;
+}
+.imp-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 680;
+}
+.imp-head .imp-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--sh-border-strong, #8884);
+  border-top-color: var(--sh-accent);
+  border-radius: 50%;
+  animation: imp-spin 0.8s linear infinite;
+  flex: none;
+}
+.imp-card[data-mode='perfect'] .imp-spinner,
+.imp-card[data-mode='fatal'] .imp-spinner,
+.imp-card[data-mode='unsupported'] .imp-spinner,
+.imp-card[data-mode='confirm'] .imp-spinner {
+  display: none;
+}
+@keyframes imp-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 进度步骤 */
+.imp-stages {
+  padding: 4px 18px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.imp-stage {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12.5px;
+  color: var(--sh-faint);
+}
+.imp-stage__dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  background: var(--sh-surface-3, #8883);
+  color: var(--sh-faint);
+}
+.imp-stage[data-state='run'] { color: var(--sh-text); font-weight: 600; }
+.imp-stage[data-state='run'] .imp-stage__dot {
+  background: var(--sh-accent);
+  color: var(--sh-accent-text, #fff);
+}
+.imp-stage[data-state='done'] { color: var(--sh-muted); }
+.imp-stage[data-state='done'] .imp-stage__dot {
+  background: var(--sh-accent-soft, #2f6bff22);
+  color: var(--sh-accent);
+}
+.imp-stage[data-state='error'] { color: var(--sh-danger, #dc2626); }
+.imp-stage[data-state='error'] .imp-stage__dot {
+  background: var(--sh-danger, #dc2626);
+  color: #fff;
+}
+.imp-stage__note { margin-left: auto; font-size: 11px; color: var(--sh-faint); font-weight: 400; }
+
+/* 日志栏（默认折叠） */
+.imp-log-toggle {
+  margin: 0 18px;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--sh-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.imp-log-toggle:hover { color: var(--sh-accent); }
+.imp-log-toggle .imp-log-caret { transition: transform 0.15s ease; }
+.imp-log-toggle[aria-expanded='true'] .imp-log-caret { transform: rotate(90deg); }
+.imp-log-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  background: var(--sh-surface-3, #8883);
+  color: var(--sh-text);
+}
+.imp-log-badge[data-level='fatal'] { background: #dc2626; color: #fff; }
+.imp-log-badge[data-level='auto'] { background: #d97706; color: #fff; }
+.imp-log-badge[data-level='repeat'] { background: #7c3aed; color: #fff; }
+.imp-log {
+  margin: 6px 18px 0;
+  border: 1px solid var(--sh-border);
+  border-radius: 10px;
+  overflow: auto;
+  max-height: 240px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.imp-log[hidden] { display: none; }
+.imp-log__section + .imp-log__section { border-top: 1px solid var(--sh-border); }
+.imp-log__head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sh-text);
+  cursor: pointer;
+  text-align: left;
+}
+.imp-log__head:hover { background: var(--sh-surface-2); }
+.imp-log__caret { transition: transform 0.15s ease; color: var(--sh-faint); }
+.imp-log__head[aria-expanded='true'] .imp-log__caret { transform: rotate(90deg); }
+.imp-log__count {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--sh-faint);
+}
+.imp-log__section[data-level='fatal'] .imp-log__head { color: #dc2626; }
+.imp-log__section[data-level='auto'] .imp-log__head { color: #d97706; }
+.imp-log__section[data-level='repeat'] .imp-log__head { color: #7c3aed; }
+.imp-log__items {
+  padding: 0 10px 8px 28px;
+  margin: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.imp-log__items[hidden] { display: none; }
+.imp-log__items li {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--sh-muted);
+  padding-left: 12px;
+  position: relative;
+}
+.imp-log__items li::before {
+  content: '·';
+  position: absolute;
+  left: 2px;
+  color: var(--sh-faint);
+}
+.imp-log__section[data-level='ok'] .imp-log__items li { color: var(--sh-faint); }
+
+/* 底部：左提示 + 右按钮 */
+.imp-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  margin-top: auto;
+  border-top: 1px solid var(--sh-border);
+  background: var(--sh-surface-2);
+}
+.imp-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--sh-muted);
+}
+.imp-card[data-mode='perfect'] .imp-hint { color: #16a34a; font-weight: 600; }
+.imp-card[data-mode='fatal'] .imp-hint,
+.imp-card[data-mode='unsupported'] .imp-hint { color: var(--sh-danger, #dc2626); }
+.imp-foot .sh-btn { flex: none; }
+/* .sh-btn 自带 display:inline-flex 会压过 [hidden] 的 UA 隐藏，隐藏的继续/取消按钮必须显式收起 */
+.imp-foot .sh-btn[hidden] { display: none; }
+
+/* 音频偏好容器（行样式统一走外壳 .sh-apref，见 shell.css） */
+.imp-prefs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--sh-border);
+  background: var(--sh-surface-2);
+}

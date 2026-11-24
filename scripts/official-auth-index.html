@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><script>(function(){try{
+var W=window;if(W.__TOY_PERF__){return;}
+var P=W.performance;if(!P||!P.getEntriesByType){return;}
+var M={fw:[],sent:false};W.__TOY_PERF__=M;
+M.pnow=function(){try{return P.now?P.now():(Date.now()-M.t0);}catch(e){return 0;}};
+M.head=Math.round(P.now?P.now():0);
+M.t0=Math.round((P.timeOrigin!==undefined&&P.timeOrigin!==null)?P.timeOrigin:
+ ((P.timing&&P.timing.navigationStart)||Date.now()));
+M.sid=(W.crypto&&W.crypto.randomUUID)?W.crypto.randomUUID():
+ (Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,10));
+M.fcp=undefined;
+M.readFCP=function(){try{
+ if(M.fcp!==undefined){return M.fcp;}
+ var es=P.getEntriesByType("paint")||[];
+ for(var i=0;i<es.length;i++){
+  if(es[i].name==="first-contentful-paint"){M.fcp=Math.round(es[i].startTime);return M.fcp;}}
+}catch(e){}
+return M.fcp;};
+try{var po=new W.PerformanceObserver(function(l){try{
+ var es=l.getEntries();for(var i=0;i<es.length;i++){
+  if(es[i].name==="first-contentful-paint"&&M.fcp===undefined){M.fcp=Math.round(es[i].startTime);
+   try{if(M.onFCP){M.onFCP();}}catch(e){}}}
+}catch(e){}});
+try{po.observe({type:"paint",buffered:true});}catch(e){po.observe({entryTypes:["paint"]});}
+}catch(e){}
+M.probe=function(){try{
+ var hit=[];var d=document;
+ var add=function(k){if(hit.indexOf(k)<0){hit.push(k);}};
+ if(W.unityInstance||W.UnityLoader||W.createUnityInstance){add("unity");}
+ if(W.vm||W.Scratch||W.ScratchVM){add("scratch");}
+ if(W.cc||W.cocos){add("cocos");}
+ if(W.Godot){add("godot");}
+ if(W.PIXI){add("pixi");}
+ if(W.Phaser){add("phaser");}
+ if(W.THREE){add("three");}
+ if(W.BABYLON){add("babylon");}
+ if(W.WebAssembly&&W.Module&&(W.Module.asm||W.Module.wasmBinary||W._malloc)){add("wasm");}
+ if(W.Vue||d.querySelector&&d.querySelector("[data-v-app]")){add("vue");}
+ if(W.React||W.ReactDOM){add("react");}
+ for(var i=0;i<hit.length;i++){if(M.fw.indexOf(hit[i])<0){M.fw.push(hit[i]);}}
+}catch(e){}};
+M.kind=function(){try{
+ var cv=document.getElementsByTagName?document.getElementsByTagName("canvas"):[];
+ var engine=["unity","scratch","cocos","godot","pixi","phaser","three","babylon"];
+ var hasEngine=false;
+ for(var i=0;i<engine.length;i++){if(M.fw.indexOf(engine[i])>=0){hasEngine=true;break;}}
+ if(cv&&cv.length>0){return hasEngine?"canvas-engine":"canvas";}
+ return hasEngine?"dom-engine":"dom";
+}catch(e){return "unknown";}};
+M.collect=function(withKind){try{
+ var nav=(P.getEntriesByType("navigation")||[])[0]||{};
+ var o={toy_id:M.toyID,render_mode:M.renderMode,layer:M.layer,
+  session_id:M.sid,time_origin:M.t0};
+ var put=function(k,v){try{var x=Math.round(v||0);if(x>0){o[k]=x;}}catch(e){}};
+ put("ttfb",nav.responseStart);put("dcl",nav.domContentLoadedEventEnd);
+ put("load",nav.loadEventEnd);put("doc_bytes",nav.decodedBodySize);
+ put("head_ms",M.head);put("transfer_bytes",nav.transferSize);
+ put("encoded_bytes",nav.encodedBodySize);
+ if(withKind){M.probe();o.kind=M.kind();o.fw=M.fw.join(",");}
+ var fcp=M.readFCP();
+ if(fcp!==undefined){o.fcp=fcp;}
+ if(M.fcpEst!==undefined){o.fcp_est=M.fcpEst;}
+ if(M.selfArmed){put("ff_self",M.ffSelf);o.ff_self_src=M.ffSrc||(M.selfDone?"none":"pending");}
+ return o;
+}catch(e){return null;}};
+}catch(e){}})();(function(){try{
+var W=window;var M=W.__TOY_PERF__;if(!M){return;}
+var P=W.performance;if(!P){return;}
+M.fcpEst=undefined;
+M.armEst=function(){try{
+ if(M.estArmed){return;}M.estArmed=true;
+ if(!W.MutationObserver){return;}
+ var D=document;
+ var SKIP={SCRIPT:1,STYLE:1,LINK:1,META:1,HEAD:1,TITLE:1,NOSCRIPT:1,TEMPLATE:1};
+ var INK={IMG:1,SVG:1,VIDEO:1,INPUT:1,BUTTON:1,TEXTAREA:1,SELECT:1};
+ var vis=function(n){try{var s=W.getComputedStyle(n);
+  return !s||(s.display!=="none"&&s.visibility!=="hidden"&&s.opacity!=="0");
+ }catch(e){return true;}};
+ var scan=function(n,dep){try{
+  if(dep>14){return false;}
+  if(n.nodeType===3){return /\S/.test(n.nodeValue||"");}
+  if(n.nodeType!==1){return false;}
+  if(SKIP[n.tagName]){return false;}
+  if(!vis(n)){return false;}
+  if(INK[n.tagName]){return true;}
+  try{var s=W.getComputedStyle(n);
+   if(s&&s.backgroundImage&&s.backgroundImage!=="none"){return true;}}catch(e){}
+  var c=n.childNodes||[];
+  for(var i=0;i<c.length;i++){if(scan(c[i],dep+1)){return true;}}
+  return false;
+ }catch(e){return false;}};
+ var anc=function(n){try{var p=n.parentNode;
+  while(p&&p.nodeType===1){if(SKIP[p.tagName]||!vis(p)){return false;}p=p.parentNode;}
+  return true;
+ }catch(e){return true;}};
+ var ink=function(n){try{
+  if(!n||!D.body){return false;}
+  if(n!==D.body&&(!D.body.contains||!D.body.contains(n))){return false;}
+  if(!anc(n)){return false;}
+  return scan(n,0);
+ }catch(e){return false;}};
+ var now=function(){try{return Math.round(P.now?P.now():(Date.now()-M.t0));}catch(e){return 0;}};
+ var mark=function(){try{
+  if(M.fcpEst!==undefined){return;}
+  var set=function(){try{if(M.fcpEst===undefined){M.fcpEst=now();}}catch(e){}};
+  if(W.requestAnimationFrame){W.requestAnimationFrame(function(){try{setTimeout(set,0);}catch(e){set();}});}
+  else{setTimeout(set,16);}
+ }catch(e){}};
+ var both=function(){try{mark();if(M.selfMark){M.selfMark();}}catch(e){}};
+ var mo=new W.MutationObserver(function(rs){try{
+  for(var i=0;i<rs.length;i++){
+   var a=rs[i].addedNodes||[];
+   for(var j=0;j<a.length;j++){if(ink(a[j])){both();mo.disconnect();return;}}
+   if(rs[i].type==="characterData"&&ink(rs[i].target)){both();mo.disconnect();return;}}
+ }catch(e){}});
+ mo.observe(D,{childList:true,subtree:true,characterData:true});
+}catch(e){}};
+}catch(e){}})();(function(){try{
+var W=window;var M=W.__TOY_PERF__;if(!M){return;}
+var P=W.performance;if(!P){return;}
+M.ffSelf=undefined;M.ffSrc=undefined;M.cvs=[];
+var hit=function(src){try{
+ if(M.ffSelf!==undefined){return;}
+ M.ffSelf=Math.round(M.pnow());M.ffSrc=src;M.unhookCtx();
+ try{if(M.onSelf){M.onSelf();}}catch(e){}
+}catch(e){}};
+M.unhookCtx=function(){try{
+ var H=W.HTMLCanvasElement;
+ if(M.gcOrig&&H&&H.prototype&&H.prototype.getContext===M.gcWrap){H.prototype.getContext=M.gcOrig;}
+ M.gcOrig=null;M.gcWrap=null;M.cvs=[];
+}catch(e){}};
+M.selfMark=function(){try{
+ if(M.ffSelf!==undefined||!W.requestAnimationFrame){return;}
+ W.requestAnimationFrame(function(){try{
+  W.requestAnimationFrame(function(){try{hit("raf2");}catch(e){}});
+ }catch(e){}});
+}catch(e){}};
+M.armSelf=function(){try{
+ if(M.selfArmed){return;}M.selfArmed=true;
+ var H=W.HTMLCanvasElement;
+ if(!H||!H.prototype||typeof H.prototype.getContext!=="function"){return;}
+ var orig=H.prototype.getContext;
+ M.gcOrig=orig;
+ M.gcWrap=function(t){
+  var r=orig.apply(this,arguments);
+  try{if(r&&M.cvs.length<8){
+   var dup=false;
+   for(var i=0;i<M.cvs.length;i++){if(M.cvs[i].c===this){dup=true;break;}}
+   if(!dup){M.cvs.push({c:this,t:(""+t).toLowerCase(),x:r,bad:false});}}}catch(e){}
+  return r;};
+ H.prototype.getContext=M.gcWrap;
+}catch(e){}};
+M.probeCanvas=function(round){try{
+ if(M.ffSelf!==undefined){return;}
+ var D=document;var gl=false;var tainted=false;
+ for(var i=0;i<M.cvs.length;i++){
+  var q=M.cvs[i];var cv=q.c;var x=q.x;
+  if(q.t.indexOf("webgl")>=0||q.t.indexOf("webgpu")>=0){gl=true;continue;}
+  if(q.bad||q.t!=="2d"||!x||!x.getImageData||!cv){continue;}
+  if(D.body&&D.body.contains&&!D.body.contains(cv)){continue;}
+  if(!cv.clientWidth||!cv.clientHeight||!cv.width||!cv.height){continue;}
+  var w=cv.width,h=cv.height;
+  var pts=[[w>>1,h>>1],[0,0],[w-1,h-1],[w>>2,h>>2]];
+  var p=pts[(round||0)%pts.length];
+  try{
+   var d=x.getImageData(p[0],p[1],1,1).data;
+   if(d[3]!==0||d[0]!==0||d[1]!==0||d[2]!==0){hit("pixel");return;}
+  }catch(er){q.bad=true;if(er&&er.name==="SecurityError"){tainted=true;}}
+ }
+ if(M.ffSrc===undefined){if(gl){M.ffSrc="gl-blind";}else if(tainted){M.ffSrc="tainted";}}
+}catch(e){}};
+}catch(e){}})();(function(){try{
+var W=window;var M=W.__TOY_PERF__;if(!M){return;}
+var NS="toy-shell-ability";
+M.toyID=51035314058240;M.renderMode=2;
+M.layer="content";
+M.armEst();M.armSelf();
+try{var pn=0;var pt=M.pnow();var pdone=function(){try{clearInterval(pk);}catch(e){}
+ try{if(M.unhookCtx){M.unhookCtx();}}catch(e){}
+ M.selfDone=true;try{if(M.onSelf){M.onSelf();}}catch(e){}};
+var pk=setInterval(function(){try{
+ M.probeCanvas(pn);
+ if(M.ffSelf!==undefined||++pn>=12||
+  (M.pnow()-pt)>=3600){pdone();}
+}catch(e){pdone();}},300);}catch(e){}
+M.seq=0;
+var flush=function(rs,up){try{
+ if(up==="self"){if(M.sent3){return;}M.sent3=true;}
+ else if(up){if(M.sent2){return;}M.sent2=true;}
+ else{if(M.sent){return;}M.sent=true;}
+ var o=M.collect(true);if(!o){return;}
+ o.flush_reason=up?(up==="self"?"self":"up"):rs;o.seq=++M.seq;o.ns=NS;o.type="perf";
+ M.pendingOut=(o.ff_self_src==="pending");
+ if(W.parent&&W.parent!==W){W.parent.postMessage(o,"*");}
+}catch(e){}};
+try{var n=0;var tk=setInterval(function(){try{M.probe();if(++n>8||M.done){clearInterval(tk);}}catch(e){}},400);}catch(e){}
+var arm=function(){try{
+ var waited=0;
+ var stop=function(t){try{M.done=true;clearInterval(t);}catch(e){}};
+ var tick=setInterval(function(){try{
+  waited+=300;
+  if(M.readFCP()!==undefined){stop(tick);flush("fcp",M.sent);return;}
+  if(M.fcpEst!==undefined){flush("est",false);}
+  if(waited>=5000){stop(tick);flush("bound",false);}
+ }catch(e){stop(tick);flush("err",false);}},300);
+ M.onFCP=function(){try{
+  if(!M.sent||M.sent2){return;}
+  stop(tick);flush("fcp",true);
+ }catch(e){}};
+ M.onSelf=function(){try{
+  if(!M.sent||M.sent3||!M.pendingOut){return;}
+  flush("self","self");
+ }catch(e){}};
+}catch(e){flush("err",false);}};
+if(document.readyState==="complete"){arm();}
+else{W.addEventListener("load",arm,false);}
+}catch(e){}})();</script><script>if(window.self===window.top){window.location.replace("https://www.bilibili.com/toy/lumiscore-sdk-test/51035314058240-v39804/index.html?_tk=MTc5Mzc3ODkyNQ.032faf155ba81e51a113ef7a6ce78ff79f0cbb552143b39ec98f99cd6292cc77");}</script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Shell Test · 顶栏 / 底栏 移动端调试</title>
+  <link rel="stylesheet" href="shell.css" />
+  <link rel="stylesheet" href="test.css" />
+</head>
+<body>
+  <script>
+    // 页面模式：prod=正式外观（隐藏所有测试/调试控件）/ test=完整测试模式
+    // 切换入口：连点左上角 logo 5 次（compat.js 内实现）；URL 带 ?test=1 也可直接进入测试模式
+    (function () {
+      var m = 'prod'
+      try {
+        if (location.search.indexOf('test=1') >= 0 || localStorage.getItem('toyTestMode') === '1') m = 'test'
+      } catch (_) {}
+      document.body.setAttribute('data-mode', m)
+    })()
+  </script>
+  <!-- ── 顶栏（复刻 shell.ts 结构） ─────────────────────── -->
+  <header class="sh-topbar" id="shell-topbar">
+    <button class="sh-brand" type="button">
+      <img class="sh-brand__mark" src="icons/lumiscore-logo.svg" alt="" />
+      <span>星跃谱</span>
+    </button>
+    <div class="sh-sep"></div>
+    <div class="sh-title"><strong id="title-text">示例曲.mid</strong></div>
+    <div class="sh-spacer"></div>
+    <div class="sh-topbar-group">
+      <button class="sh-pagecount" type="button" id="pagecount-btn">第1/5页</button>
+      <div class="sh-steps-wrap">
+        <nav class="sh-steps" aria-label="steps">
+          <button class="sh-step" type="button" id="step-btn" data-step="1" data-state="current">
+            <span id="step-label">导入</span>
+            <span class="sh-step__caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+          </button>
+        </nav>
+        <div class="sh-dropdown sh-steps__drop" id="steps-drop" hidden></div>
+      </div>
+      <div class="sh-menu" data-menu="tracks">
+        <button class="sh-icon-btn" type="button" aria-label="音轨">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h13M21 18h-1"/><circle cx="16" cy="6" r="2.2" fill="var(--sh-surface)"/><circle cx="10" cy="12" r="2.2" fill="var(--sh-surface)"/><circle cx="19" cy="18" r="2.2" fill="var(--sh-surface)"/></svg>
+        </button>
+        <div class="sh-dropdown" hidden></div>
+      </div>
+      <div class="sh-menu" data-menu="aspect">
+        <button class="sh-icon-btn" type="button" aria-label="画面比例">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5.5A2.5 2.5 0 0 1 5.5 3H7M17 3h1.5A2.5 2.5 0 0 1 21 5.5V7M21 17v1.5a2.5 2.5 0 0 1-2.5 2.5H17M7 21H5.5A2.5 2.5 0 0 1 3 18.5V17"/><rect x="7.5" y="7.5" width="9" height="9" rx="1" stroke-dasharray="2.6 2.2"/></svg>
+        </button>
+        <div class="sh-dropdown sh-dropdown--wide" hidden></div>
+      </div>
+      <div class="sh-menu" data-menu="tools">
+        <button class="sh-icon-btn" type="button" aria-label="工具">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 12h.01M12 12h.01M18 12h.01"/></svg>
+        </button>
+        <div class="sh-dropdown sh-dropdown--wide" hidden></div>
+      </div>
+      <div class="sh-menu" data-menu="settings">
+        <button class="sh-icon-btn" type="button" aria-label="设置">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <div class="sh-dropdown sh-dropdown--wide" hidden></div>
+      </div>
+      <!-- 超宽屏功能区里的路径 / 场景入口（按页显隐，点开同一个面板） -->
+      <div class="sh-menu rail-panel-entry" id="rail-panel-entry" data-menu="panel" hidden>
+        <button class="sh-icon-btn" type="button" id="rail-panel-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M8.4 6H14a3.6 3.6 0 0 1 0 7.2h-4A3.6 3.6 0 0 0 6.4 20h1"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="sh-next" id="next-wrap">
+      <button class="sh-btn sh-btn--primary sh-next__main" type="button" id="next-btn">下一步</button>
+      <button class="sh-next__caret" type="button" id="next-caret" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="sh-dropdown sh-next__drop" id="next-drop" hidden></div>
+    </div>
+  </header>
+
+  <!-- ── 页面占位 ──────────────────────────────────────── -->
+  <main class="test-page">
+    <div class="test-viewport" id="vp-info">—</div>
+    <div class="test-card" id="test-card">
+      <div class="test-num" id="page-num">1</div>
+      <div class="test-name" id="page-name">第一页 · 导入</div>
+      <button class="test-cycle" type="button" id="cycle-btn">切换到下一页</button>
+    </div>
+    <!-- 第 6 页：渲染探测 + 视频导出测试（页面流内，不悬浮） -->
+    <section class="test-export" id="export-panel" hidden>
+      <h2 class="te-title">渲染探测 / 视频导出</h2>
+
+      <div class="te-card">
+        <h3>① 环境与渲染器探测</h3>
+        <pre class="te-pre" id="probe-out">探测中…</pre>
+        <button class="te-btn te-btn--dark" type="button" id="probe-reload">重新探测</button>
+      </div>
+
+      <div class="te-card">
+        <h3>② 生成 5s 黑屏视频</h3>
+        <div class="te-meta" id="video-meta">未生成</div>
+        <button class="te-btn te-btn--primary" type="button" id="btn-gen">生成 5s 黑屏视频 (webm)</button>
+        <button class="te-btn te-btn--green" type="button" id="btn-mp4">尝试生成 mp4</button>
+      </div>
+
+      <div class="te-card">
+        <h3>③ 导出方式（全部）</h3>
+        <button class="te-btn te-btn--warn" type="button" id="btn-share">① Web Share 文件分享（弹系统分享→QQ/微信）</button>
+        <button class="te-btn te-btn--warn" type="button" id="btn-savevideo">② 底层 saveVideoToPhotosAlbum（存相册）</button>
+        <button class="te-btn te-btn--dark" type="button" id="btn-download">③ a[download] 触发下载</button>
+        <button class="te-btn te-btn--dark" type="button" id="btn-toy-share">④ toy.share（分享页面链接）</button>
+        <button class="te-btn te-btn--green" type="button" id="btn-base64">⑤ 输出 base64 文本</button>
+      </div>
+
+      <div class="te-card">
+        <h3>日志</h3>
+        <pre class="te-pre te-pre--log" id="export-log">[ready]</pre>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── 播放悬浮条（复刻 playerbar.ts 结构，竖屏时停靠为底栏） ── -->
+  <div class="sh-float" id="player-float" aria-label="播放">
+    <div class="sh-pb">
+      <div class="sh-pb__row">
+        <div class="sh-float__grip" role="separator" aria-label="拖动">
+          <span class="sh-float__dots"><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        </div>
+        <button class="sh-pb__icon sh-pb__pin" type="button" aria-label="图钉">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3v5l3 3v2h-6v6l-1 2-1-2v-6H5v-2l3-3V3h8m0-2H8c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 .28-.11.53-.29.71L6.3 12.1c-.19.19-.3.44-.3.7V14c0 .55.45 1 1 1h5v5.5c0 .32.18.62.46.77L12 22l.54-.73c.28-.15.46-.45.46-.77V15h5c.55 0 1-.45 1-1v-1.2c0-.26-.11-.51-.29-.71l-2.41-2.39A1 1 0 0 1 15 9V3h1c.55 0 1-.45 1-1s-.45-1-1-1z"/></svg>
+        </button>
+        <button class="sh-pb__icon" type="button" aria-label="后退 10 秒">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4.6L5.2 9l5.8 4.4v-3A5.6 5.6 0 1 1 5.4 16H3.4a7.6 7.6 0 1 0 7.6-9z" fill="currentColor" stroke="none"/><path d="M5.2 4.6v3.4" /></svg>
+        </button>
+        <button class="sh-pb__icon sh-pb__play" type="button" aria-label="播放/暂停">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>
+        </button>
+        <button class="sh-pb__icon" type="button" aria-label="前进 10 秒">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4.6L18.8 9 13 13.4V10a5.6 5.6 0 1 0 5.6 6h2A7.6 7.6 0 1 1 13 7z" fill="currentColor" stroke="none"/><path d="M18.8 4.6V8" /></svg>
+        </button>
+        <span class="sh-pb__time" id="pb-time">0:00</span>
+        <input type="range" class="sh-pb__seek" min="0" max="1000" value="0" aria-label="进度" />
+        <div class="sh-pb__break"></div>
+        <button class="sh-pb__icon sh-pb__vol" type="button" aria-label="音量" id="pb-vol"></button>
+        <input type="range" class="sh-pb__mini-range" min="0" max="100" step="1" value="80" aria-label="音量滑杆" />
+        <button class="sh-pb__speed" type="button" id="pb-speed">1×</button>
+        <button class="sh-pb__panel-btn" type="button" id="pb-panel-btn" hidden>路径</button>
+        <span class="sh-pb__zoom-icon" aria-hidden="true" id="pb-zoom-icon"></span>
+        <input type="range" class="sh-pb__mini-range sh-pb__zoom" min="0" max="100" step="1" value="100" aria-label="缩放" />
+        <button class="sh-pb__icon sh-pb__close" type="button" aria-label="收起">×</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 超宽屏（>2:1）行首折叠开关：标题行、播放控件行各一个 ── -->
+  <button class="corner-collapse" type="button" id="collapse-title" hidden aria-label="折叠标题">‹</button>
+  <button class="corner-collapse" type="button" id="collapse-player" hidden aria-label="折叠播放控件">‹</button>
+
+  <!-- 路径 / 场景面板：底栏与页面之间（竖屏）或侧栏左侧（超宽屏）弹出 -->
+  <div class="sh-pb-panel" id="pb-panel" hidden>
+    <div class="sh-pb-panel__head">
+      <span class="sh-pb-panel__title" id="pb-panel-title"></span>
+      <button class="pb-panel__pin" type="button" id="pb-panel-pin" aria-label="钉住面板" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 3v5l3 3v2h-6v6l-1 2-1-2v-6H5v-2l3-3V3h8m0-2H8c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 .28-.11.53-.29.71L6.3 12.1c-.19.19-.3.44-.3.7V14c0 .55.45 1 1 1h5v5.5c0 .32.18.62.46.77L12 22l.54-.73c.28-.15.46-.45.46-.77V15h5c.55 0 1-.45 1-1v-1.2c0-.26-.11-.51-.29-.71l-2.41-2.39A1 1 0 0 1 15 9V3h1c.55 0 1-.45 1-1s-.45-1-1-1z"/></svg>
+      </button>
+    </div>
+    <div class="sh-pb-panel__body" id="pb-panel-body"></div>
+  </div>
+
+  <script src="//s1.hdslb.com/bfs/seed/toy/app/sdk/toy-sdk.js"></script>
+  <script src="compat.js"></script>
+  <script src="toy-sdk.js"></script>
+  <script src="export-test.js"></script>
+  <script src="test.js"></script>
+</body>
+</html>
+

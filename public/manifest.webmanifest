@@ -1,0 +1,41 @@
+{
+  "name": "星跃谱 LumiScore · 3D 可视化乐谱试用版",
+  "short_name": "星跃谱",
+  "description": "星跃谱（LumiScore）是月谱工坊（MoonScore）的功能先导体验分支：纯浏览器端的 3D 可视化乐谱试用版。导入 MIDI / MusicXML，2D 修正后生成可播放、跟随、导出的 3D 立体乐谱，全程本地处理。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "landscape-primary",
+  "background_color": "#06060e",
+  "theme_color": "#06060e",
+  "categories": ["music", "multimedia", "entertainment"],
+  "lang": "zh-CN",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/icons/lumiscore-favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
+

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <clipPath id="circleClip">
+      <circle cx="120" cy="120" r="98"/>
+    </clipPath>
+    <mask id="moonMask">
+      <circle cx="120" cy="120" r="98" fill="white"/>
+      <circle cx="178" cy="88" r="84" fill="black"/>
+    </mask>
+    <g id="notehead">
+      <path d="M97 -125c-54 0 -97 31 -97 83c0 86 88 167 198 167c57 0 97 -32 97 -83c0 -85 -109 -167 -198 -167z"/>
+    </g>
+  </defs>
+
+  <rect width="240" height="240" fill="#ffffff"/>
+
+  <g clip-path="url(#circleClip)">
+    <circle cx="120" cy="120" r="98" fill="#FFC800"/>
+    <circle cx="178" cy="88" r="84" fill="#ffffff"/>
+
+    <g stroke="#141414" stroke-width="5" fill="none" stroke-linecap="round">
+      <path d="M10,95 Q55,88 95,95 T175,95 T230,95"/>
+      <path d="M10,125 Q55,118 95,125 T175,125 T230,125"/>
+      <path d="M10,155 Q55,148 95,155 T175,155 T230,155"/>
+      <path d="M10,185 Q55,178 95,185 T175,185 T230,185"/>
+      <path d="M10,215 Q55,208 95,215 T175,215 T230,215"/>
+    </g>
+    <g stroke="#ffffff" stroke-width="5" fill="none" stroke-linecap="round" mask="url(#moonMask)">
+      <path d="M10,95 Q55,88 95,95 T175,95 T230,95"/>
+      <path d="M10,125 Q55,118 95,125 T175,125 T230,125"/>
+      <path d="M10,155 Q55,148 95,155 T175,155 T230,155"/>
+      <path d="M10,185 Q55,178 95,185 T175,185 T230,185"/>
+      <path d="M10,215 Q55,208 95,215 T175,215 T230,215"/>
+    </g>
+
+    <use href="#notehead" transform="translate(60,107) scale(0.1,-0.1)" fill="#141414"/>
+    <use href="#notehead" transform="translate(110,127) scale(0.1,-0.1)" fill="#141414"/>
+    <line x1="90" y1="55" x2="90" y2="105" stroke="#141414" stroke-width="5" stroke-linecap="round"/>
+    <line x1="140" y1="70" x2="140" y2="124" stroke="#141414" stroke-width="5" stroke-linecap="round"/>
+    <line x1="90" y1="55" x2="140" y2="70" stroke="#141414" stroke-width="11" stroke-linecap="round"/>
+
+    <use href="#notehead" transform="translate(164,140) scale(0.1,-0.1)" fill="#141414"/>
+    <line x1="194" y1="93" x2="194" y2="138" stroke="#141414" stroke-width="5" stroke-linecap="round"/>
+
+    <g mask="url(#moonMask)">
+      <use href="#notehead" transform="translate(60,107) scale(0.1,-0.1)" fill="#ffffff"/>
+      <use href="#notehead" transform="translate(110,127) scale(0.1,-0.1)" fill="#ffffff"/>
+      <line x1="90" y1="55" x2="90" y2="105" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+      <line x1="140" y1="70" x2="140" y2="124" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+      <line x1="90" y1="55" x2="140" y2="70" stroke="#ffffff" stroke-width="11" stroke-linecap="round"/>
+      <use href="#notehead" transform="translate(164,140) scale(0.1,-0.1)" fill="#ffffff"/>
+      <line x1="194" y1="93" x2="194" y2="138" stroke="#ffffff" stroke-width="5" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

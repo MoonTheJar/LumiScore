@@ -1,0 +1,18 @@
+iframe found: https://www.bilibilitoy.com/toy/lumiscore/pages/import/index.html
+iframe timeline:
+0ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+500ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+1000ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+1500ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+2000ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+2500ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+3000ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+3500ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+4000ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+4500ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+5000ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+5500ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+6000ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+6500ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+7000ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}
+7500ms: {"hasProgress":true,"text":"引擎已就绪，可以直接导入","barW":"","topbar":"星跃谱第 1/5 页导入导入导入 MIDI / MusicXML，自动校验与转换数据2D 修正查看并","dropOk":true}

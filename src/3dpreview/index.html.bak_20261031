@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>星跃谱 LumiScore · 3D 乐谱</title>
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" type="image/svg+xml" href="../../icons/lumiscore-favicon.svg" />
+  <style>
+    @font-face {
+      font-family: 'Bravura';
+      src: url('../../fonts/Bravura.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Liberation';
+      src: url('../../fonts/Liberation.woff2') format('woff2');
+    }
+
+    #canvas-container {
+      position: fixed;
+      inset: 0;
+      touch-action: none;
+      cursor: grab;
+    }
+    #canvas-container.dragging { cursor: grabbing; }
+
+    /* ── 相机面板（收纳在「相机 ▾」里，故默认不显示） ── */
+    #camPanel { display: grid; gap: 6px; padding: 4px; }
+    .cam-row {
+      display: grid;
+      grid-template-columns: 96px 1fr;
+      align-items: center;
+      gap: 8px;
+    }
+    .cam-row > span { color: var(--sh-muted); font-size: 12px; }
+    .cam-row input:not([type='checkbox']):not([type='range']),
+    .cam-row select {
+      width: 100%;
+      height: 28px;
+      padding: 0 6px;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+      background: var(--sh-surface);
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12px;
+      text-align: right;
+    }
+    /* 滑轨行：标签 + 滑轨 + 右侧手动输入框 */
+    .cam-row--slide {
+      grid-template-columns: 52px 1fr 64px;
+    }
+    .cam-row--slide input[type='number'] {
+      text-align: center;
+      padding: 0 2px;
+    }
+    .cam-row input[type='range'] { width: 100%; accent-color: var(--sh-accent); }
+    .cam-btns { display: flex; gap: 6px; margin-top: 2px; }
+    .cam-btns button { flex: 1; }
+    #repeatInfo { font-size: 11px; color: var(--sh-faint); }
+
+    /* ── 渲染信息（收纳在「工具 ▾」里） ── */
+    #info {
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--sh-muted);
+    }
+
+    /* ── 操作提示：首次出现，8 秒后自动淡出 ── */
+    #hint {
+      position: fixed;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      z-index: 10;
+      max-width: calc(100vw - 32px);
+      padding: 6px 14px;
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-pill);
+      background: var(--sh-surface);
+      background: color-mix(in srgb, var(--sh-surface) 88%, transparent);
+      backdrop-filter: blur(10px);
+      color: var(--sh-muted);
+      font-size: 12px;
+      text-align: center;
+      pointer-events: none;
+      animation: p4-hint-out 0.6s ease 8s forwards;
+    }
+    @keyframes p4-hint-out {
+      to { opacity: 0; visibility: hidden; }
+    }
+    @media (max-width: 640px) {
+      #hint { display: none; }
+    }
+
+    /* ── 空状态 ── */
+    #empty {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--sh-bg);
+    }
+    #empty[hidden] { display: none; }
+    #empty .box {
+      width: min(420px, calc(100vw - 40px));
+      padding: 28px;
+      text-align: center;
+      background: var(--sh-surface);
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-lg);
+      box-shadow: var(--sh-shadow-2);
+    }
+    #empty h2 { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
+    #empty p { margin: 0; color: var(--sh-muted); font-size: 13px; line-height: 1.7; }
+    #empty .box .sh-btn { margin-top: 18px; }
+    #empty .box .sh-btn--ghost { margin-top: 8px; }
+
+    /* ── WebGL 不可用时的兜底卡片 ── */
+    .p4-fatal {
+      position: fixed;
+      inset: var(--sh-topbar-h) 0 0 0;
+      z-index: 25;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--sh-bg);
+    }
+    .p4-fatal .box {
+      width: min(560px, 100%);
+      padding: 26px;
+      background: var(--sh-surface);
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-lg);
+      box-shadow: var(--sh-shadow-2);
+    }
+    .p4-fatal h2 { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
+    .p4-fatal p { margin: 0; color: var(--sh-muted); font-size: 13px; line-height: 1.7; }
+    .p4-fatal ul { margin: 12px 0 0; padding-left: 18px; }
+    .p4-fatal li { color: var(--sh-muted); font-size: 12.5px; line-height: 1.8; }
+    .p4-fatal code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--sh-surface-2);
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11.5px;
+    }
+    .p4-fatal pre {
+      margin: 14px 0 0;
+      padding: 10px;
+      max-height: 160px;
+      overflow: auto;
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-sm);
+      background: var(--sh-surface-2);
+      color: var(--sh-danger);
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* ── 3D 场景设置悬浮窗 v2（左右分栏） ── */
+    .sp-host {
+      width: 250px;
+      display: flex;
+      flex-direction: column;
+      background: var(--sh-surface);
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-lg);
+      box-shadow: var(--sh-shadow-2);
+      font-size: 12px;
+      overflow: hidden;
+    }
+    .sp-host--wide { width: 560px; max-width: 92vw; }
+    .sp-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--sh-border);
+    }
+    .sp-head strong { flex: 1; font-size: 12.5px; font-weight: 650; }
+    .sp-split { display: flex; height: 240px; max-height: 40vh; }
+    .sp-nav {
+      flex: 1;
+      flex-shrink: 0;
+      border-right: 1px solid var(--sh-border);
+      background: var(--sh-surface-2);
+      padding: 6px 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .sp-nav__btn {
+      text-align: left;
+      padding: 7px 10px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12.5px;
+      cursor: pointer;
+    }
+    .sp-nav__btn:hover { background: var(--sh-surface); }
+    .sp-nav__btn--on { background: var(--sh-accent-soft); color: var(--sh-accent); font-weight: 650; }
+    .sp-content { flex: 2; overflow-y: auto; padding: 10px 12px; }
+
+    .sp-objtabs { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+    .sp-objtab {
+      padding: 5px 10px;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+      background: var(--sh-surface);
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .sp-objtab--on { border-color: var(--sh-accent); background: var(--sh-accent-soft); color: var(--sh-accent); }
+
+    /* ── 材质行：圆角方形色块 + 圆角矩形材质下拉 ── */
+    .sp-matrow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 2px 0 10px;
+    }
+    .sp-swatch {
+      flex-shrink: 0;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: 1px solid var(--sh-border);
+      border-radius: 8px;
+      background: var(--sh-surface-2);
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .sp-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+    .sp-swatch::-webkit-color-swatch { border: 0; border-radius: 6px; }
+    .sp-swatch::-moz-color-swatch { border: 0; border-radius: 6px; }
+    .sp-matdd { flex: 1; min-width: 0; }
+    .sp-matdd__btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      height: 30px;
+      padding: 0 9px;
+      border: 1px solid var(--sh-border);
+      border-radius: 8px;
+      background: var(--sh-surface-2);
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .sp-matdd__btn:hover { border-color: var(--sh-accent); }
+    .sp-matdd__label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sp-matdd__caret { color: var(--sh-muted); font-size: 10px; }
+
+    /* ── 颜色下拉窗按钮（色块 + 文字 + 箭头；点击弹跟随/自定义/恢复默认） ── */
+    .sp-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 26px;
+      padding: 0 7px;
+      border: 1px solid var(--sh-border);
+      border-radius: 8px;
+      background: var(--sh-surface-2);
+      color: var(--sh-muted);
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+      min-width: 0;
+    }
+    .sp-chip:hover { border-color: var(--sh-accent); }
+    .sp-chip--lg { height: 30px; flex: 1; }
+    .sp-chip__sw {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      border-radius: 5px;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+    }
+    .sp-chip--lg .sp-chip__sw { width: 20px; height: 20px; border-radius: 6px; }
+    .sp-chip__lab { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sp-chip__caret { flex-shrink: 0; color: var(--sh-faint); font-size: 10px; }
+    /* 下拉窗内单行取色：标签 + 颜色输入框 */
+    .sp-crow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
+    .sp-crow > span { flex: 1; color: var(--sh-muted); font-size: 12px; }
+    .sp-crow input[type='color'] {
+      width: 58px;
+      height: 24px;
+      padding: 1px;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+      background: var(--sh-surface-2);
+      cursor: pointer;
+    }
+    /* 性能风险提示（光线追踪实验开关） */
+    .sp-rtrisk {
+      color: color-mix(in srgb, var(--sh-danger, #e5484d) 80%, var(--sh-text));
+      border: 1px solid color-mix(in srgb, var(--sh-danger, #e5484d) 45%, transparent);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--sh-danger, #e5484d) 8%, transparent);
+    }
+
+    /* ── 材质下拉浮层（挂 body、fixed 定位，避免被右列滚动区裁剪） ── */
+    .sp-ddpop {
+      position: fixed;
+      z-index: 1200;
+      overflow-y: auto;
+      padding: 4px;
+      border: 1px solid var(--sh-border);
+      border-radius: 8px;
+      background: var(--sh-surface);
+      box-shadow: var(--sh-shadow-2);
+      font-size: 12px;
+    }
+    .sp-ddsec {
+      padding: 6px 8px 4px;
+      color: var(--sh-faint);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    .sp-ddsep { height: 1px; margin: 4px 2px; background: var(--sh-border); }
+    .sp-ddhead {
+      padding: 6px 8px 2px;
+      color: var(--sh-faint);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    .sp-followrow {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+    }
+    .sp-followrow > span { color: var(--sh-text); font-size: 12px; }
+    .sp-followrow input[type='checkbox'] { accent-color: var(--sh-accent); }
+    .sp-followrow button { flex-shrink: 0; }
+    .sp-dditem {
+      display: block;
+      width: 100%;
+      padding: 5px 8px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sp-dditem:hover { background: var(--sh-surface-2); }
+    .sp-dditem--on { background: var(--sh-accent-soft); color: var(--sh-accent); font-weight: 650; }
+    /* 网络贴图分类：原生 <details> 多级折叠 */
+    .sp-ddgrp > summary {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      color: var(--sh-muted);
+      cursor: pointer;
+      list-style: none;
+    }
+    .sp-ddgrp > summary::-webkit-details-marker { display: none; }
+    .sp-ddgrp > summary::before {
+      content: '▸';
+      flex-shrink: 0;
+      font-size: 9px;
+      color: var(--sh-faint);
+      transition: transform 0.12s;
+    }
+    .sp-ddgrp[open] > summary::before { transform: rotate(90deg); }
+    .sp-ddgrp > summary:hover { background: var(--sh-surface-2); color: var(--sh-text); }
+    .sp-ddgrp__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sp-ddgrp__cnt { color: var(--sh-faint); font-size: 10.5px; }
+
+    .sp-adj { display: flex; flex-direction: column; gap: 4px; }
+    .sp-row {
+      display: grid;
+      grid-template-columns: 78px 1fr;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 0;
+    }
+    .sp-row > span { color: var(--sh-muted); }
+    .sp-row select, .sp-row input[type='color'] {
+      width: 100%; height: 26px;
+      border: 1px solid var(--sh-border); border-radius: 6px;
+      background: var(--sh-surface-2); color: var(--sh-text);
+      font: inherit; font-size: 12px;
+    }
+    .sp-row input[type='color'] { padding: 1px; cursor: pointer; }
+    .sp-row input[type='range'] { width: 100%; accent-color: var(--sh-accent); }
+    .sp-row input[type='checkbox'] { justify-self: start; accent-color: var(--sh-accent); width: 16px; height: 16px; }
+    .sp-note { padding: 8px; color: var(--sh-faint); font-size: 11.5px; line-height: 1.6; }
+    /* 次级小按钮（恢复默认色 / 下载更多贴图…） */
+    .sp-morebtn {
+      width: 100%; padding: 5px 0;
+      border: 1px solid var(--sh-border); border-radius: 6px;
+      background: var(--sh-surface-2); color: var(--sh-muted);
+      font: inherit; font-size: 11.5px; cursor: pointer;
+    }
+    .sp-morebtn:hover { color: var(--sh-accent); border-color: var(--sh-accent); }
+    /* 辅助线分组：轨迹线 / 起点线 / 终点线 */
+    .sp-lineblk {
+      margin-top: 8px; padding-top: 6px;
+      border-top: 1px dashed var(--sh-border);
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .sp-subhead {
+      font-size: 12px; font-weight: 650; color: var(--sh-text);
+      padding: 2px 0 4px;
+    }
+    .sp-pathbar {
+      display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px;
+      scrollbar-width: thin;
+    }
+    .sp-pathbtn {
+      flex: 0 0 auto; padding: 4px 12px; border-radius: 999px;
+      border: 1px solid var(--sh-border, #ccc); background: transparent;
+      color: var(--sh-faint, #888); font-size: 12px; cursor: pointer;
+      white-space: nowrap;
+    }
+    .sp-pathbtn--on {
+      background: var(--sh-accent, #4a9eff); color: #fff; border-color: transparent;
+    }
+    @media (max-width: 640px) {
+      .sp-host--wide { width: 92vw; }
+      .sp-nav { width: 72px; }
+      .sp-split { height: 32vh; }
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <!-- 下面这些块装在隐藏容器里：外壳启动时把它们搬进「相机 ▾」「工具 ▾」与悬浮播放窗 -->
+  <div id="shell-src" hidden>
+  <div id="camPanel">
+    <div class="cam-row">
+      <span>相机模式</span>
+      <select id="camMode">
+        <option value="timeline" selected>时间轴相机（跟随）</option>
+        <option value="free">自由相机</option>
+      </select>
+    </div>
+    <div class="cam-row">
+      <span>焦点 x（轨道）</span>
+      <input id="focusX" type="number" step="0.1" />
+    </div>
+    <div class="cam-row cam-row--slide">
+      <span>高度 r</span>
+      <input id="radiusSlide" type="range" min="1" max="20" step="0.1" />
+      <input id="radius" type="number" step="0.1" />
+    </div>
+    <div class="cam-row cam-row--slide">
+      <span>俯角</span>
+      <input id="rotXSlide" type="range" min="5" max="87" step="1" />
+      <input id="rotX" type="number" min="5" max="87" step="1" />
+    </div>
+    <div class="cam-row cam-row--slide">
+      <span>旋转 y</span>
+      <input id="rotYSlide" type="range" min="-180" max="180" step="1" />
+      <input id="rotY" type="number" min="-180" max="180" step="1" />
+    </div>
+    <div class="cam-row cam-row--slide">
+      <span>旋转 z</span>
+      <input id="rotZSlide" type="range" min="-180" max="180" step="1" />
+      <input id="rotZ" type="number" min="-180" max="180" step="1" />
+    </div>
+    <div class="cam-row"><span>反复区间</span><span id="repeatInfo"></span></div>
+    <div class="cam-btns">
+      <button id="resetCam" class="sh-btn sh-btn--sm" type="button">重置预设</button>
+      <button id="applyCam" class="sh-btn sh-btn--sm sh-btn--primary" type="button">应用</button>
+    </div>
+  </div>
+
+  <div id="info">等待导入乐谱</div>
+  </div>
+
+  <div id="hint" data-i18n="p4.hint"></div>
+
+  <div id="empty">
+    <div class="box">
+      <h2 data-i18n="p4.empty.title"></h2>
+      <p data-i18n="p4.empty.desc"></p>
+      <div><button id="goImport" class="sh-btn sh-btn--primary" type="button" data-i18n="p4.empty.go"></button></div>
+    </div>
+  </div>
+
+  <!-- 临时测试面板（照搬测试页滑块） -->
+  <div id="testPanel" style="position:fixed;left:12px;top:12px;z-index:9999;padding:10px 14px;background:rgba(20,20,20,0.85);border:1px solid #555;color:#fff;font:13px/1.9 system-ui;">
+    <label>拖尾长度 <input id="tTrail" type="range" min="0" max="2" step="0.05" value="0.8"><output id="tTrailV"></output></label>
+    <label>小球大小 <input id="tBall" type="range" min="0.01" max="0.15" step="0.005" value="0.035"><output id="tBallV"></output></label>
+    <label>发光强度 <input id="tBloomS" type="range" min="0" max="3" step="0.05" value="1"><output id="tBloomSV"></output></label>
+    <label>光晕半径 <input id="tBloomR" type="range" min="0" max="1.5" step="0.05" value="0.5"><output id="tBloomRV"></output></label>
+    <label>亮度阈值 <input id="tBloomT" type="range" min="0" max="1" step="0.01" value="0.25"><output id="tBloomTV"></output></label>
+    <label>抛物线高度 <input id="tJump" type="range" min="0" max="3" step="0.05" value="0.5"><output id="tJumpV"></output></label>
+  </div>
+  <script>
+    function bindTest() {
+      if (!window.__test) { setTimeout(bindTest, 200); return; }
+      var t = window.__test;
+      function bind(id, vid, get, set, fmt) {
+        var el = document.getElementById(id), out = document.getElementById(vid);
+        el.addEventListener('input', function(){ set(parseFloat(el.value)); out.textContent = fmt(parseFloat(el.value)); });
+        var cur = Number(get()) || 0; // 初始化：把当前真实值同步到滑杆，防止显示值与内部状态脱节
+        el.value = Math.min(parseFloat(el.max), Math.max(parseFloat(el.min), cur));
+        out.textContent = fmt(parseFloat(el.value));
+      }
+      bind('tTrail','tTrailV', ()=>t.trailSec, t.setTrailSec, v=>v.toFixed(2)+'s');
+      bind('tBall','tBallV', ()=>t.ballRadius, t.setBallRadius, v=>v.toFixed(3));
+      bind('tBloomS','tBloomSV', ()=>t.bloom.strength, t.setBloomStrength, v=>v.toFixed(2));
+      bind('tBloomR','tBloomRV', ()=>t.bloom.radius, t.setBloomRadius, v=>v.toFixed(2));
+      bind('tBloomT','tBloomTV', ()=>t.bloom.threshold, t.setBloomThreshold, v=>v.toFixed(2));
+      bind('tJump','tJumpV', ()=>t.jumpHeight, t.setJumpHeight, v=>v.toFixed(2));
+    }
+    bindTest();
+  </script>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

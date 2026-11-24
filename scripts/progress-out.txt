@@ -1,0 +1,17 @@
+timeline:
+0ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+500ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+1000ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+1500ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+2000ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+2500ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+3000ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+3500ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+4000ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+4500ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+5000ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+5500ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+6000ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+6500ms: {"hasProgress":false,"text":"","width":"","topbarText":""}
+final: {"url":"https://www.bilibilitoy.com/toy/lumiscore/pages/import/index.html","text":"♪\n♩\n♫\n♬\n星跃谱 · LUMISCORE\n3D 可视化乐谱\n\n让音符跃出纸面，在三维空间里随乐声流动。\n\n月谱工坊 MoonScore · 功能先导体验\n\n↓\n把乐谱文件拖到这里\n\n拖入或选择一个乐谱文件：自动识别类型、校验完整性，非 XML 自动转换、反复记号自动展开，最终生成 MusicXML 与标准 MIDI。全部在本地完成，不会上传。\n\n选择乐谱文件\n示例乐谱\n♪\n巴赫 · C 大调","hasProgress":true,"buttons":"选择乐谱文件,♪巴赫 · C 大调前奏曲,♫肖邦 · 夜曲 Op.9 N,♩神的随波逐流 · 神のまにま,星跃谱,第 1/5 页"}
+console errors: (none)

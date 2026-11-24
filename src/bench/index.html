@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>测试台 LumiScore · 3D 场景</title>
+  <meta name="color-scheme" content="light dark" />
+  <link rel="icon" type="image/svg+xml" href="../../icons/lumiscore-favicon.svg" />
+  <link rel="stylesheet" href="../../shell-theme.css" />
+  <!-- 首屏这几件事必须内联（外链脚本和模块都要等整张依赖图下载求值完才执行）：
+       ① 主题/动效偏好：原来要等 JS 才写 data-theme，暗色用户必然先白闪一下再转暗；
+       ② data-boot='1'：让 public/shell-theme.css 里的令牌副本先顶着首帧，
+          外壳挂上后由 shell.ts 摘掉标记，副本自动退出层叠，不存在谁覆盖谁；
+       ③ 看门狗兜底：模块图过大、某个资源 404、任何一处抛错时，页面不能永远停在
+          「data-i18n 节点全是空、按钮没字」的骨架上，至少给一句人话和一个重试按钮；
+       ④ 装配看门狗：外壳挂上 ≠ 本页脚本跑完。模块顶层半途抛错时后半段根本不执行，
+          症状是「页面看着正常、下拉和面板全没了」，所以模块要走完顶层并调
+          __lumiReady()，没调到就把这条中断显式挂在页面上（各页 main.ts 末尾）。 -->
+  <script>
+    (function () {
+      var root = document.documentElement
+      root.dataset.boot = '1'
+      try {
+        var tm = localStorage.getItem('midee.theme') || 'system'
+        root.dataset.theme =
+          tm === 'dark' || (tm === 'system' && matchMedia('(prefers-color-scheme: dark)').matches)
+            ? 'dark'
+            : 'light'
+        root.dataset.motion = localStorage.getItem('midee.motion') === 'reduced' ? 'reduced' : 'full'
+      } catch (e) {
+        /* 隐私模式读不到 localStorage：按默认亮色 */
+      }
+      // 看门狗跑在模块图之前，没法 import i18n：就地按持久化语言挑一份极简词表
+      var zh = false
+      try {
+        var savedLocale = localStorage.getItem('midee.locale')
+        zh = savedLocale
+          ? savedLocale.indexOf('zh') === 0
+          : (navigator.language || '').indexOf('zh') === 0
+      } catch (e) {
+        /* 沿用中文 */
+      }
+      var L = zh
+        ? { head: '界面没能加载完成', sep: '：', tail: '，可能是网络或资源加载被打断。', retry: '重新加载', ignore: '暂不处理', asm: '本页控件没能全部装上：页面脚本被一条错误中断，下拉和面板点了可能没反应。原因见下面那行，浏览器控制台（F12）里有完整堆栈。', res: '资源或脚本加载失败', async: '异步任务失败', timeout: '超时未就绪', title: '测试台 LumiScore · 3D 场景' }
+        : { head: 'The interface failed to load', sep: ': ', tail: '. The network or a resource may have been interrupted.', retry: 'Reload', ignore: 'Dismiss', asm: 'Some controls on this page never got built: the page script was interrupted by an error, so dropdowns and panels may do nothing. The line below names the cause; the browser console (F12) has the full trace.', res: 'A resource or script failed to load', async: 'An async task failed', timeout: 'Timed out before it was ready', title: 'LumiScore · 3D Score' }
+      document.title = L.title
+      var timer = 0
+      var box = null
+      // 装配看门狗：「外壳挂上了」不等于「本页脚本跑完了」。模块后半段一抛错就悄无声息
+      // 地不执行，症状是页面看着正常、下拉和面板全没了——只有本页自己知道装配是否结束，
+      // 所以约定模块顶层走完要调 __lumiReady()。没调到 = 初始化被中断。
+      var asm = { ready: false, err: '', hushed: false }
+      window.__lumiAsm = asm
+      // e.target 是元素 → 资源 404（无关紧要）；是 window → 脚本运行时错误（真凶）
+      function isScriptErr(e) {
+        return !!(e && e.message && (!e.target || e.target === window))
+      }
+      function show(reason) {
+        if (box || root.dataset.topbar === 'expanded') return
+        box = document.createElement('div')
+        box.className = 'lumi-bootfail'
+        box.setAttribute('role', 'alert')
+        box.textContent = L.head + (reason ? L.sep + reason : '') + L.tail
+        var btn = document.createElement('button')
+        btn.type = 'button'
+        btn.textContent = L.retry
+        btn.addEventListener('click', function () {
+          location.reload()
+        })
+        box.appendChild(btn)
+        document.body.appendChild(box)
+      }
+      // 装配中断专用：不看 topbar，把错误原文摊开，给「重新加载」和「暂不处理」两个出口
+      function showAsm() {
+        if (asm.ready || asm.hushed || box) return
+        box = document.createElement('div')
+        box.className = 'lumi-bootfail lumi-bootfail--asm'
+        box.setAttribute('role', 'alert')
+        var p = document.createElement('div')
+        p.textContent = L.asm
+        box.appendChild(p)
+        if (asm.err) {
+          var d = document.createElement('div')
+          d.className = 'lumi-bootfail__err'
+          d.textContent = asm.err
+          box.appendChild(d)
+        }
+        var r = document.createElement('button')
+        r.type = 'button'
+        r.textContent = L.retry
+        r.addEventListener('click', function () {
+          location.reload()
+        })
+        var x = document.createElement('button')
+        x.type = 'button'
+        x.className = 'lumi-bootfail__x'
+        x.textContent = L.ignore
+        x.addEventListener('click', function () {
+          // 记下「暂不处理」：15s 那条兜底定时器不能再把横幅弹回来
+          asm.hushed = true
+          box.remove()
+          box = null
+        })
+        box.append(r, x)
+        document.body.appendChild(box)
+      }
+      // 报错先宽限 1.5s：无关资源 404 不该抢先把人吓一跳，外壳正常挂上就一笔勾销；
+      // 装配未完成时的脚本错误就是真凶，不等。
+      function suspect(reason, fatal) {
+        if (timer || box) return
+        timer = setTimeout(
+          function () {
+            timer = 0
+            if (fatal) showAsm()
+            else show(reason)
+          },
+          fatal ? 300 : 1500
+        )
+      }
+      // capture=true 才收得到 link/script 这类资源加载失败
+      addEventListener('error', function (e) {
+        var msg = e && e.message ? String(e.message).slice(0, 140) : ''
+        var fatal = isScriptErr(e) && !asm.ready
+        if (fatal && !asm.err) asm.err = msg
+        suspect(msg || L.res, fatal)
+      }, true)
+      addEventListener('unhandledrejection', function () {
+        suspect(L.async)
+      })
+      setTimeout(function () {
+        show(L.timeout)
+      }, 10000)
+      // 初始化卡住不报错（await 永不返回）也算装配失败，只是没有错误原文。
+      // 留 15s：dev 冷启动整张模块图可能就要十几秒，别抢跑。
+      setTimeout(function () {
+        showAsm()
+      }, 15000)
+      window.__lumiBooted = function () {
+        delete root.dataset.boot
+        if (timer) {
+          clearTimeout(timer)
+          timer = 0
+        }
+        // 装配中断的横幅不归外壳管：它说的是本页脚本没跑完，topbar 起来不代表控件装上了
+        if (box && !box.classList.contains('lumi-bootfail--asm')) {
+          box.remove()
+          box = null
+        }
+      }
+      // 由模块在顶层求值全部走完后调用（见各页 main.ts 末尾）
+      window.__lumiReady = function () {
+        asm.ready = true
+        if (box && box.classList.contains('lumi-bootfail--asm')) {
+          box.remove()
+          box = null
+        }
+      }
+    })()
+  </script>
+  <!-- 谱面字体提前 preload：等样式生效再排队会白慢一拍（首屏字体回退闪一下就是它） -->
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../fonts/Bravura.woff2" />
+  <link rel="preload" as="font" type="font/woff2" crossorigin href="../../fonts/Liberation.woff2" />
+  <style>
+    @font-face {
+      font-family: 'Bravura';
+      src: url('../../fonts/Bravura.woff2') format('woff2');
+    }
+    @font-face {
+      font-family: 'Liberation';
+      src: url('../../fonts/Liberation.woff2') format('woff2');
+      /* 歌词/文字用：先出系统字体再换，别为了等字体空着一段文字 */
+      font-display: swap;
+    }
+
+    #canvas-container {
+      position: fixed;
+      inset: var(--sh-canvas-top, 54px) var(--sh-side-inset, 0px) 0 0;
+      touch-action: none;
+      cursor: grab;
+    }
+    #canvas-container.dragging { cursor: grabbing; }
+
+    /* ── 画面比例辅助层：裁剪虚线 / 置黑遮罩（纯视觉，不参与导出） ──
+       与画布同一内缩可视区（避开背板顶栏/侧栏），辅助线不会压到背板下 */
+    .aspect-overlay {
+      position: fixed;
+      inset: var(--sh-canvas-top, 54px) var(--sh-side-inset, 0px) 0 0;
+      pointer-events: none;
+      z-index: 40;
+    }
+    .aspect-guide { position: absolute; border: 2px dashed; box-sizing: border-box; }
+    .aspect-mask { position: absolute; background: #000; }
+    .aspect-menu { display: grid; gap: 2px; padding: 6px; min-width: 210px; }
+    .aspect-menu__hint {
+      padding: 2px 8px 6px;
+      color: var(--sh-faint);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .aspect-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: 6px;
+      color: var(--sh-text); font: inherit; font-size: 12.5px;
+      cursor: pointer; user-select: none;
+    }
+    .aspect-row:hover { background: var(--sh-surface-2); }
+    .aspect-row.is-on { background: color-mix(in srgb, var(--sh-accent) 14%, transparent); }
+    .aspect-row__pick {
+      display: flex; align-items: center; gap: 8px;
+      flex: 1; min-width: 0; border-radius: 4px; cursor: pointer;
+    }
+    .aspect-row__pick:focus-visible { outline: 2px solid var(--sh-accent); outline-offset: -2px; }
+    .aspect-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+    .aspect-row span { flex: 1; }
+    .aspect-bulb {
+      display: flex; padding: 2px; border: 0; border-radius: 4px;
+      background: transparent; cursor: pointer; color: var(--sh-faint);
+    }
+    .aspect-bulb:hover { color: var(--sh-text); }
+    .aspect-bulb:focus-visible { outline: 2px solid var(--sh-accent); outline-offset: 1px; }
+    .aspect-bulb.is-on { color: #f5c518; }
+
+    /* ── 相机面板（收纳在「相机 ▾」里，故默认不显示） ── */
+    #camPanel { display: grid; gap: 6px; padding: 4px; }
+    .cam-row {
+      display: grid;
+      grid-template-columns: 96px 1fr;
+      align-items: center;
+      gap: 8px;
+    }
+    .cam-row > span { color: var(--sh-muted); font-size: 12px; }
+    .cam-row input:not([type='checkbox']):not([type='range']),
+    .cam-row select {
+      width: 100%;
+      height: 28px;
+      padding: 0 6px;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+      background: var(--sh-surface);
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12px;
+      text-align: right;
+    }
+    /* 滑轨行：标签 + 滑轨 + 右侧手动输入框 */
+    .cam-row--slide {
+      grid-template-columns: 52px 1fr 64px;
+    }
+    .cam-row--slide input[type='number'] {
+      text-align: center;
+      padding: 0 2px;
+    }
+    .cam-row input[type='range'] { width: 100%; accent-color: var(--sh-accent); }
+    .cam-btns { display: flex; gap: 6px; margin-top: 2px; }
+    .cam-btns button { flex: 1; }
+    #repeatInfo { font-size: 11px; color: var(--sh-faint); }
+
+    /* ── 工具下拉的两个 tab：相机 / 时间 ──
+       相机 tab 里再按模式换一套项：时间轴相机=焦点/容忍度/偏移/半径/角度，
+       自由相机=位置 x y z + 偏航/俯仰/翻滚（由 applyFreePose 直接读写相机矩阵）。 */
+    .cam-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 2px;
+      margin: 0 0 4px;
+      border-radius: 8px;
+      background: var(--sh-surface-2);
+    }
+    .cam-tab {
+      flex: 1;
+      height: 26px;
+      padding: 0 8px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--sh-muted);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .cam-tab:hover { color: var(--sh-text); }
+    .cam-tab.is-on {
+      background: var(--sh-surface);
+      color: var(--sh-accent);
+      font-weight: 650;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+    }
+    .cam-pane { display: grid; gap: 6px; }
+    .cam-pane[hidden] { display: none; }
+    /* ── 修复页签：诊断摘要 + 由轻到重的刷新按钮 ── */
+    .fix-diag {
+      padding: 6px 8px;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+      background: var(--sh-surface-2);
+      color: var(--sh-muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.65;
+      white-space: pre-line;
+    }
+    .fix-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+    .fix-btns .sh-btn { flex: 1 1 auto; }
+    /* 三块收纳：自检 / 巡检 / 手动刷新，默认只展开自检 */
+    .fix-grp {
+      border: 1px solid var(--sh-border);
+      border-radius: 8px;
+      background: var(--sh-surface);
+    }
+    .fix-grp > summary {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      cursor: pointer;
+      list-style: none;
+      color: var(--sh-muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .fix-grp > summary::-webkit-details-marker { display: none; }
+    .fix-grp > summary::before {
+      content: "▸";
+      color: var(--sh-faint);
+      transition: transform 0.12s;
+    }
+    .fix-grp[open] > summary::before { transform: rotate(90deg); }
+    .fix-grp > summary:hover { color: var(--sh-text); }
+    .fix-grp__body {
+      display: grid;
+      gap: 6px;
+      padding: 0 8px 8px;
+    }
+    .fix-stamp {
+      margin-left: auto;
+      color: var(--sh-faint);
+      font-size: 10.5px;
+      font-weight: 400;
+    }
+    .fix-prompt { color: var(--sh-muted); font-size: 11px; margin-top: 2px; }
+    .fix-check { cursor: pointer; }
+    .fix-check input[type='checkbox'] { justify-self: end; width: 16px; height: 16px; accent-color: var(--sh-accent); }
+    .fix-list { display: grid; gap: 4px; }
+    .fix-item {
+      display: grid;
+      grid-template-columns: 14px 62px 1fr auto;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      background: var(--sh-surface-2);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .fix-item__mark { text-align: center; font-weight: 700; }
+    .fix-item__name { color: var(--sh-muted); }
+    .fix-item__detail { color: var(--sh-text); overflow-wrap: anywhere; }
+    .fix-item__btn { flex: 0 0 auto; }
+    .fix-item--ok .fix-item__mark { color: var(--sh-faint); }
+    .fix-item--auto .fix-item__mark { color: var(--sh-accent); }
+    .fix-item--fixable .fix-item__mark { color: #e0a13a; }
+    .fix-item--manual { border-left: 2px solid #e05b5b; }
+    .fix-item--manual .fix-item__mark { color: #e05b5b; }
+    /* 模式行：标签 + 自绘下拉（原生 select 的弹层样式跨浏览器不一致） */
+    .cam-row--pick { grid-template-columns: 96px 1fr; }
+    .cam-note { font-size: 11px; line-height: 1.5; color: var(--sh-faint); }
+
+    /* ── 渲染信息（收纳在「工具 ▾」里） ── */
+    #info {
+      font-size: 12px;
+      line-height: 1.7;
+      color: var(--sh-muted);
+    }
+
+    /* ── 操作提示：首次出现，8 秒后自动淡出 ── */
+    #hint {
+      position: fixed;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%);
+      z-index: 10;
+      max-width: calc(100vw - 32px);
+      padding: 6px 14px;
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-pill);
+      background: var(--sh-surface);
+      background: color-mix(in srgb, var(--sh-surface) 88%, transparent);
+      backdrop-filter: blur(10px);
+      color: var(--sh-muted);
+      font-size: 12px;
+      text-align: center;
+      pointer-events: none;
+      animation: p4-hint-out 0.6s ease 8s forwards;
+    }
+    @keyframes p4-hint-out {
+      to { opacity: 0; visibility: hidden; }
+    }
+    @media (max-width: 640px) {
+      #hint { display: none; }
+    }
+
+    /* ── 空状态 ── */
+    #empty {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--sh-bg);
+    }
+    #empty[hidden] { display: none; }
+    #empty .box {
+      width: min(420px, calc(100vw - 40px));
+      padding: 28px;
+      text-align: center;
+      background: var(--sh-surface);
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-lg);
+      box-shadow: var(--sh-shadow-2);
+    }
+    #empty h2 { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
+    #empty p { margin: 0; color: var(--sh-muted); font-size: 13px; line-height: 1.7; }
+    #empty .box .sh-btn { margin-top: 18px; }
+    #empty .box .sh-btn--ghost { margin-top: 8px; }
+
+    /* ── WebGL 不可用时的兜底卡片 ── */
+    .p4-fatal {
+      position: fixed;
+      inset: var(--sh-topbar-h) 0 0 0;
+      z-index: 25;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: var(--sh-bg);
+    }
+    .p4-fatal .box {
+      width: min(560px, 100%);
+      padding: 26px;
+      background: var(--sh-surface);
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-lg);
+      box-shadow: var(--sh-shadow-2);
+    }
+    .p4-fatal h2 { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
+    .p4-fatal p { margin: 0; color: var(--sh-muted); font-size: 13px; line-height: 1.7; }
+    .p4-fatal ul { margin: 12px 0 0; padding-left: 18px; }
+    .p4-fatal li { color: var(--sh-muted); font-size: 12.5px; line-height: 1.8; }
+    .p4-fatal code {
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--sh-surface-2);
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11.5px;
+    }
+    .p4-fatal pre {
+      margin: 14px 0 0;
+      padding: 10px;
+      max-height: 160px;
+      overflow: auto;
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-sm);
+      background: var(--sh-surface-2);
+      color: var(--sh-danger);
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* ── 3D 场景设置悬浮窗 v2（左右分栏） ── */
+    .sp-host {
+      width: 250px;
+      display: flex;
+      flex-direction: column;
+      background: var(--sh-surface);
+      border: 1px solid var(--sh-border);
+      border-radius: var(--sh-r-lg);
+      box-shadow: var(--sh-shadow-2);
+      font-size: 12px;
+      overflow: hidden;
+    }
+    .sp-host--wide { width: 560px; max-width: 92vw; }
+    .sp-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--sh-border);
+    }
+    .sp-head strong { flex: 1; font-size: 12.5px; font-weight: 650; }
+    .sp-split { display: flex; height: 240px; max-height: 40vh; }
+    .sp-nav {
+      flex: 1;
+      flex-shrink: 0;
+      border-right: 1px solid var(--sh-border);
+      background: var(--sh-surface-2);
+      padding: 6px 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .sp-nav__btn {
+      text-align: left;
+      padding: 7px 10px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12.5px;
+      cursor: pointer;
+    }
+    .sp-nav__btn:hover { background: var(--sh-surface); }
+    .sp-nav__btn--on { background: var(--sh-accent-soft); color: var(--sh-accent); font-weight: 650; }
+    /* 设置页正文：窗口裁到的部分靠滚轮/触屏滑动够到（外层 .sh-float 也已同口径限高） */
+    .sp-content {
+      flex: 2;
+      overflow-y: auto;
+      padding: 10px 12px;
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .sp-objtabs { display: flex; gap: 4px; margin-bottom: 10px; flex-wrap: wrap; }
+    .sp-objtab {
+      padding: 5px 10px;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+      background: var(--sh-surface);
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .sp-objtab--on { border-color: var(--sh-accent); background: var(--sh-accent-soft); color: var(--sh-accent); }
+
+    /* ── 材质行：圆角方形色块 + 圆角矩形材质下拉 ── */
+    .sp-matrow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 2px 0 10px;
+    }
+    .sp-swatch {
+      flex-shrink: 0;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: 1px solid var(--sh-border);
+      border-radius: 8px;
+      background: var(--sh-surface-2);
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .sp-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+    .sp-swatch::-webkit-color-swatch { border: 0; border-radius: 6px; }
+    .sp-swatch::-moz-color-swatch { border: 0; border-radius: 6px; }
+    .sp-matdd { flex: 1; min-width: 0; }
+    .sp-matdd__btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      height: 30px;
+      padding: 0 9px;
+      border: 1px solid var(--sh-border);
+      border-radius: 8px;
+      background: var(--sh-surface-2);
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .sp-matdd__btn:hover { border-color: var(--sh-accent); }
+    .sp-matdd__label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sp-matdd__caret { color: var(--sh-muted); font-size: 10px; }
+
+    /* ── 颜色下拉窗按钮（色块 + 文字 + 箭头；点击弹跟随/自定义/恢复默认） ── */
+    .sp-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 26px;
+      padding: 0 7px;
+      border: 1px solid var(--sh-border);
+      border-radius: 8px;
+      background: var(--sh-surface-2);
+      color: var(--sh-muted);
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+      min-width: 0;
+    }
+    .sp-chip:hover { border-color: var(--sh-accent); }
+    .sp-chip--lg { height: 30px; flex: 1; }
+    .sp-chip__sw {
+      flex-shrink: 0;
+      width: 16px;
+      height: 16px;
+      border-radius: 5px;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+    }
+    .sp-chip--lg .sp-chip__sw { width: 20px; height: 20px; border-radius: 6px; }
+    .sp-chip__lab { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sp-chip__caret { flex-shrink: 0; color: var(--sh-faint); font-size: 10px; }
+    /* 下拉窗内单行：跟随下拉 + 同步开关 */
+    .sp-crow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
+    .sp-crow > span { flex: 1; color: var(--sh-muted); font-size: 12px; }
+
+    /* ── 自绘取色面板（替掉浏览器原生 <input type=color>） ── */
+    .sp-ddpop--color { min-width: 336px; }
+    .sp-cp { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
+    .sp-cp__main { display: flex; gap: 8px; }
+    .sp-cp__sv {
+      position: relative;
+      width: 208px;
+      height: 140px;
+      flex-shrink: 0;
+      overflow: hidden;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+      cursor: crosshair;
+      outline: none;
+      /* 面板浮在 3D 画面上，触屏不写这条的话浏览器会判定成页面滑动并派发
+         pointercancel，setPointerCapture 当场失效 → 手指拖 SV 方块一抖就断 */
+      touch-action: none;
+    }
+    .sp-cp__svcv { display: block; width: 100%; height: 100%; }
+    .sp-cp__dot {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      margin: -6px 0 0 -6px;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+      pointer-events: none;
+    }
+    .sp-cp__hue {
+      position: relative;
+      width: 16px;
+      flex-shrink: 0;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+      cursor: pointer;
+      outline: none;
+      touch-action: none; /* 同 .sp-cp__sv */
+      background: linear-gradient(to bottom, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+    }
+    .sp-cp__knob {
+      position: absolute;
+      right: -2px;
+      left: -2px;
+      height: 4px;
+      margin-top: -2px;
+      border: 1px solid #fff;
+      border-radius: 3px;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+      pointer-events: none;
+    }
+    .sp-cp__sv:focus-visible,
+    .sp-cp__hue:focus-visible {
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--sh-accent, #4c8dff) 60%, transparent);
+    }
+    .sp-cp__side { display: flex; width: 96px; flex-direction: column; gap: 6px; }
+    .sp-cp__preview {
+      height: 46px;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+    }
+    .sp-cp__hex {
+      width: 100%;
+      padding: 3px 6px;
+      border: 1px solid var(--sh-border);
+      border-radius: 6px;
+      background: var(--sh-surface-2);
+      color: var(--sh-text);
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-align: center;
+    }
+    .sp-cp__rgb { display: flex; align-items: center; gap: 4px; }
+    .sp-cp__chan { width: 12px; color: var(--sh-faint); font-size: 11px; }
+    .sp-cp__num {
+      width: 100%;
+      min-width: 0;
+      padding: 2px 4px;
+      border: 1px solid var(--sh-border);
+      border-radius: 5px;
+      background: var(--sh-surface-2);
+      color: var(--sh-text);
+      font-size: 11px;
+    }
+    .sp-cp__row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+    .sp-cp__label { width: 34px; color: var(--sh-faint); font-size: 11px; }
+    .sp-cp__sw {
+      width: 16px;
+      height: 16px;
+      padding: 0;
+      border: 1px solid var(--sh-border);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .sp-cp__sw:hover { outline: 1px solid var(--sh-text); }
+    .sp-cp__foot { display: flex; justify-content: flex-end; }
+    .sp-cp__ok { padding: 3px 16px; font-size: 12px; }
+    /* 性能风险提示（光线追踪实验开关） */
+    .sp-rtrisk {
+      color: color-mix(in srgb, var(--sh-danger, #e5484d) 80%, var(--sh-text));
+      border: 1px solid color-mix(in srgb, var(--sh-danger, #e5484d) 45%, transparent);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--sh-danger, #e5484d) 8%, transparent);
+    }
+
+    /* ── 材质下拉浮层（挂 body、fixed 定位，避免被右列滚动区裁剪） ── */
+    .sp-ddpop {
+      position: fixed;
+      z-index: 1200;
+      overflow-y: auto;
+      /* 窗口自适应裁剪由 openPop 的 max-height 负责；这里补上触屏滑动 */
+      overscroll-behavior: contain;
+      touch-action: pan-y;
+      -webkit-overflow-scrolling: touch;
+      padding: 4px;
+      border: 1px solid var(--sh-border);
+      border-radius: 8px;
+      background: var(--sh-surface);
+      box-shadow: var(--sh-shadow-2);
+      font-size: 12px;
+    }
+    .sp-ddsec {
+      padding: 6px 8px 4px;
+      color: var(--sh-faint);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    .sp-ddsep { height: 1px; margin: 4px 2px; background: var(--sh-border); }
+    .sp-ddhead {
+      padding: 6px 8px 2px;
+      color: var(--sh-faint);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    .sp-followrow {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+    }
+    .sp-followrow > span { color: var(--sh-text); font-size: 12px; }
+    .sp-followrow input[type='checkbox'] { accent-color: var(--sh-accent); }
+    .sp-followrow button { flex-shrink: 0; }
+    .sp-dditem {
+      display: block;
+      width: 100%;
+      padding: 5px 8px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--sh-text);
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      cursor: pointer;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .sp-dditem:hover { background: var(--sh-surface-2); }
+    .sp-dditem--on { background: var(--sh-accent-soft); color: var(--sh-accent); font-weight: 650; }
+    /* 网络贴图分类：原生 <details> 多级折叠 */
+    .sp-ddgrp > summary {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      color: var(--sh-muted);
+      cursor: pointer;
+      list-style: none;
+    }
+    .sp-ddgrp > summary::-webkit-details-marker { display: none; }
+    .sp-ddgrp > summary::before {
+      content: '▸';
+      flex-shrink: 0;
+      font-size: 9px;
+      color: var(--sh-faint);
+      transition: transform 0.12s;
+    }
+    .sp-ddgrp[open] > summary::before { transform: rotate(90deg); }
+    .sp-ddgrp > summary:hover { background: var(--sh-surface-2); color: var(--sh-text); }
+    .sp-ddgrp__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sp-ddgrp__cnt { color: var(--sh-faint); font-size: 10.5px; }
+
+    .sp-adj { display: flex; flex-direction: column; gap: 4px; }
+    .sp-row {
+      display: grid;
+      grid-template-columns: 78px 1fr;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 0;
+    }
+    .sp-row > span { color: var(--sh-muted); }
+    /* 英文标签普遍比中文长一倍：78px 会把半数行折成两三条、滑轨被挤扁。
+       用百分比而不是写死像素，窄屏时还能退化成折行，不至于把控件挤没。 */
+    html[lang='en'] .sp-row { grid-template-columns: minmax(78px, 42%) 1fr; }
+    .sp-row select, .sp-row input[type='color'] {
+      width: 100%; height: 26px;
+      border: 1px solid var(--sh-border); border-radius: 6px;
+      background: var(--sh-surface-2); color: var(--sh-text);
+      font: inherit; font-size: 12px;
+    }
+    /* 自绘下拉（.sp-select = 外壳 .sh-select 按钮）在行里要和原来的 select 同尺寸 */
+    .sp-row .sp-select {
+      width: 100%; height: 26px;
+      border: 1px solid var(--sh-border); border-radius: 6px;
+      background: var(--sh-surface-2); color: var(--sh-text);
+      font: inherit; font-size: 12px;
+    }
+    .sp-row input[type='color'] { padding: 1px; cursor: pointer; }
+    .sp-row input[type='range'] { width: 100%; accent-color: var(--sh-accent); }
+    /* 滑轨 + 可键入数值框：数值框同时显示滑轨值和多路径下的「多值」 */
+    .sp-slide { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .sp-slide input[type='range'] { flex: 1 1 auto; min-width: 0; }
+    .sp-numbox {
+      flex: 0 0 52px; width: 52px; height: 22px; padding: 0 4px;
+      border: 1px solid var(--sh-border); border-radius: 5px;
+      background: var(--sh-surface-2); color: var(--sh-text);
+      font: inherit; font-size: 11.5px; text-align: right;
+    }
+    .sp-numbox:focus { outline: none; border-color: var(--sh-accent); }
+    .sp-numbox--multi { color: var(--sh-accent); text-align: center; letter-spacing: 1px; }
+    /* 多路径颜色不一致时的小色块排 */
+    .sp-swatches { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }
+    .sp-swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--sh-border); }
+    .sp-chip__lab .sp-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: middle; }
+    .sp-chip__lab .sp-multi { color: var(--sh-accent); margin-right: 4px; }
+    .sp-row input[type='checkbox'] { justify-self: start; accent-color: var(--sh-accent); width: 16px; height: 16px; }
+    .sp-note { padding: 8px; color: var(--sh-faint); font-size: 11.5px; line-height: 1.6; }
+    .sp-link {
+      border: none; background: none; padding: 0;
+      font: inherit; color: var(--sh-accent);
+      text-decoration: underline; text-underline-offset: 2px;
+      cursor: pointer;
+    }
+    .sp-link:hover { opacity: 0.8; }
+    /* 次级小按钮（恢复默认色 / 下载更多贴图…） */
+    .sp-morebtn {
+      width: 100%; padding: 5px 0;
+      border: 1px solid var(--sh-border); border-radius: 6px;
+      background: var(--sh-surface-2); color: var(--sh-muted);
+      font: inherit; font-size: 11.5px; cursor: pointer;
+    }
+    .sp-morebtn:hover { color: var(--sh-accent); border-color: var(--sh-accent); }
+    /* 辅助线分组：轨迹线 / 起点线 / 终点线 */
+    .sp-lineblk {
+      margin-top: 8px; padding-top: 6px;
+      border-top: 1px dashed var(--sh-border);
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .sp-subhead {
+      font-size: 12px; font-weight: 650; color: var(--sh-text);
+      padding: 2px 0 4px;
+    }
+    .sp-pathbar {
+      display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px;
+      scrollbar-width: thin;
+    }
+    .sp-pathbtn {
+      flex: 0 0 auto; padding: 4px 12px; border-radius: 999px;
+      border: 1px solid var(--sh-border, #ccc); background: transparent;
+      color: var(--sh-faint, #888); font-size: 12px; cursor: pointer;
+      white-space: nowrap;
+    }
+    .sp-pathbtn--on {
+      background: var(--sh-accent, #4a9eff); color: #fff; border-color: transparent;
+    }
+    @media (max-width: 640px) {
+      .sp-host--wide { width: 92vw; }
+      .sp-nav { width: 72px; }
+      .sp-split { height: 32vh; }
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <!-- 下面这些块装在隐藏容器里：外壳启动时把它们搬进「相机 ▾」「工具 ▾」与悬浮播放窗 -->
+  <div id="shell-src" hidden>
+  <div id="camPanel">
+    <div class="cam-tabs">
+      <button type="button" class="cam-tab is-on" data-tab="cam" data-i18n="cam.tab.cam">相机</button>
+      <button type="button" class="cam-tab" data-tab="time" data-i18n="cam.tab.time">时间</button>
+      <button type="button" class="cam-tab" data-tab="fix" data-i18n="cam.tab.fix">修复</button>
+    </div>
+
+    <!-- ── 相机 ── -->
+    <div class="cam-pane" data-pane="cam">
+      <div class="cam-row cam-row--pick"><span data-i18n="cam.mode">相机模式</span><div id="camModePick"></div></div>
+
+      <!-- 时间轴相机：焦点 + 居中容忍度/偏移 + 球坐标（半径/俯角/偏航/翻滚） -->
+      <div id="camSetTimeline">
+        <div class="cam-row">
+          <span data-i18n="cam.focusX">焦点 x（轨道）</span>
+          <input id="focusX" type="number" step="0.1" />
+        </div>
+        <div class="cam-row cam-row--slide" data-i18n-title="cam.tol.hint" title="0=不居中（纯时间轴）；越大越允许球偏离画面中心再拉回">
+          <span data-i18n="cam.tol">居中容忍度</span>
+          <input id="camTolSlide" type="range" min="0" max="10" step="0.1" value="1.5" />
+          <input id="camTol" type="number" min="0" max="10" step="0.1" value="1.5" />
+        </div>
+        <div class="cam-row cam-row--slide" data-i18n-title="cam.off.hint" title="球停在中心线多远的地方（世界单位）：正=焦点超前，球偏左；负=焦点滞后，球偏右">
+          <span data-i18n="cam.off">居中偏移</span>
+          <input id="camOffSlide" type="range" min="-10" max="10" step="0.1" value="0" />
+          <input id="camOff" type="number" min="-10" max="10" step="0.1" value="0" />
+        </div>
+        <div class="cam-row cam-row--slide">
+          <span data-i18n="cam.radius">高度 r</span>
+          <input id="radiusSlide" type="range" min="1" max="20" step="0.1" />
+          <input id="radius" type="number" step="0.1" />
+        </div>
+        <div class="cam-row cam-row--slide">
+          <span data-i18n="cam.rotX">俯角</span>
+          <input id="rotXSlide" type="range" min="5" max="87" step="1" />
+          <input id="rotX" type="number" min="5" max="87" step="1" />
+        </div>
+        <div class="cam-row cam-row--slide">
+          <span data-i18n="cam.rotY">旋转 y</span>
+          <input id="rotYSlide" type="range" min="-180" max="180" step="1" />
+          <input id="rotY" type="number" min="-180" max="180" step="1" />
+        </div>
+        <div class="cam-row cam-row--slide">
+          <span data-i18n="cam.rotZ">旋转 z</span>
+          <input id="rotZSlide" type="range" min="-180" max="180" step="1" />
+          <input id="rotZ" type="number" min="-180" max="180" step="1" />
+        </div>
+      </div>
+
+      <!-- 自由相机：直接读写相机世界位置 + 姿态角（不再吃时间轴那套球坐标） -->
+      <div id="camSetFree" hidden>
+        <div class="cam-row cam-row--slide" data-i18n-title="cam.freeX.hint" title="相机世界坐标 x（沿谱长方向，世界单位）">
+          <span data-i18n="cam.freeX">位置 x</span>
+          <input id="freeXSlide" type="range" min="-4000" max="4000" step="1" value="0" />
+          <input id="freeX" type="number" step="1" value="0" />
+        </div>
+        <div class="cam-row cam-row--slide" data-i18n-title="cam.freeY.hint" title="相机世界坐标 y（离地高度，世界单位）">
+          <span data-i18n="cam.freeY">位置 y</span>
+          <input id="freeYSlide" type="range" min="-1000" max="2000" step="1" value="300" />
+          <input id="freeY" type="number" step="1" value="300" />
+        </div>
+        <div class="cam-row cam-row--slide" data-i18n-title="cam.freeZ.hint" title="相机世界坐标 z（离谱面远近，世界单位）">
+          <span data-i18n="cam.freeZ">位置 z</span>
+          <input id="freeZSlide" type="range" min="-4000" max="4000" step="1" value="300" />
+          <input id="freeZ" type="number" step="1" value="300" />
+        </div>
+        <div class="cam-row cam-row--slide" data-i18n-title="cam.yaw.hint" title="绕竖直轴（0=正视 −z 方向）">
+          <span data-i18n="cam.yaw">偏航</span>
+          <input id="freeYawSlide" type="range" min="-180" max="180" step="1" value="0" />
+          <input id="freeYaw" type="number" step="1" value="0" />
+        </div>
+        <div class="cam-row cam-row--slide" data-i18n-title="cam.pitch.hint" title="绕相机右轴（正=俯视，负=仰视）">
+          <span data-i18n="cam.pitch">俯仰</span>
+          <input id="freePitchSlide" type="range" min="-90" max="90" step="1" value="0" />
+          <input id="freePitch" type="number" step="1" value="0" />
+        </div>
+        <div class="cam-row cam-row--slide" data-i18n-title="cam.roll.hint" title="绕视线翻滚">
+          <span data-i18n="cam.roll">翻滚</span>
+          <input id="freeRollSlide" type="range" min="-180" max="180" step="1" value="0" />
+          <input id="freeRoll" type="number" step="1" value="0" />
+        </div>
+        <div class="cam-note" data-i18n="cam.freeNote">自由相机：左键拖=转向，右键/中键拖=平移，滚轮或双指=沿视线推拉。六个框随时读回当前位姿，也可直接键入。</div>
+      </div>
+
+      <div class="cam-btns">
+        <button id="resetCam" class="sh-btn sh-btn--sm" type="button" data-i18n="cam.resetPreset">重置预设</button>
+        <button id="applyCam" class="sh-btn sh-btn--sm sh-btn--primary" type="button" data-i18n="cam.apply">应用</button>
+      </div>
+    </div>
+
+    <!-- ── 时间 ── -->
+    <div class="cam-pane" data-pane="time" hidden>
+      <!-- 起点/终点留白（与第三页顶栏「工具 ▾ → 首尾留白」同一份数据、同一对词条，
+           进来先读第三页的值，改动写回 midee.links） -->
+      <div class="cam-row cam-row--slide" data-i18n-title="cam.offStart.hint" title="播放头在「−起点留白」处起步，小球从起点线飞到第一个音正好用这么久；与第三页同源，改哪边都同步。">
+        <span data-i18n="l3.offStart">起点留白（秒）</span>
+        <input id="axisLeadSlide" type="range" min="0.1" max="5" step="0.1" value="0.7" />
+        <input id="axisLeadNum" type="number" min="0.1" max="5" step="0.1" value="0.7" />
+      </div>
+      <div class="cam-row cam-row--slide" data-i18n-title="cam.offEnd.hint" title="最后一个音之后，所有尾球用这么久同时抵达终点线；与第三页同源，改哪边都同步。">
+        <span data-i18n="l3.offEnd">终点留白（秒）</span>
+        <input id="axisTailSlide" type="range" min="0.1" max="5" step="0.1" value="0.7" />
+        <input id="axisTailNum" type="number" min="0.1" max="5" step="0.1" value="0.7" />
+      </div>
+      <!-- 音画对齐：可视时钟整体相对音频前后移，改完立刻生效并持久化 -->
+      <div class="cam-row cam-row--slide" data-i18n-title="cam.avOffset.hint" title="正=画面超前（球先落、声后响）；负=画面滞后。音频时刻不变，只搬画面。">
+        <span data-i18n="cam.avOffset">音画对齐</span>
+        <input id="avOffsetSlide" type="range" min="-1000" max="1000" step="10" value="0" />
+        <input id="avOffsetNum" type="number" min="-1000" max="1000" step="10" value="0" />
+      </div>
+      <div class="cam-btns">
+        <button id="avZero" class="sh-btn sh-btn--sm" type="button" data-i18n="cam.avZero">对齐归零</button>
+      </div>
+      <div class="cam-note" data-i18n="cam.avNote">单位毫秒。合成器发声与网页时钟总有几十毫秒级差错，听感上球落点和琴声错开时在这里手动抹平。</div>
+      <div class="cam-row"><span data-i18n="cam.repeat">反复区间</span><span id="repeatInfo"></span></div>
+    </div>
+
+    <!-- ── 修复 ──
+         改参/卡顿后偶发「旧小球、旧轨迹线、旧贴图像死模型一样赖在画面里」：这类残留
+         多数能靠重新把 surf 打到现有对象上解决（轻刷），少数要重建球轨或几何，
+         最坏是后期管线/GL 状态自己坏了 —— 那要重建 composer 甚至重置上下文。
+         三块全部折叠收纳：自检结果（判定 + 逐条手动入口）/ 自动巡检（间隔 + 时机）/
+         手动刷新（由轻到重的四级）。能自动修的也一律留按钮，自动只是省一次点击。 -->
+    <div class="cam-pane" data-pane="fix" hidden>
+      <details class="fix-grp" open>
+        <summary>
+          <span data-i18n="fix.grpCheck">自检</span>
+          <span id="fixStamp" class="fix-stamp"></span>
+        </summary>
+        <div class="fix-grp__body">
+          <div class="fix-btns">
+            <button id="fixCheck" class="sh-btn sh-btn--sm" type="button" data-i18n="fix.check">只扫描</button>
+            <button id="fixApplyAll" class="sh-btn sh-btn--sm sh-btn--primary" type="button" data-i18n="fix.applyAll">扫描并全部修复</button>
+          </div>
+          <div id="fixList" class="fix-list"></div>
+          <div id="fixInfo" class="fix-diag"></div>
+        </div>
+      </details>
+
+      <details class="fix-grp">
+        <summary>
+          <span data-i18n="fix.grpPatrol">自动巡检</span>
+          <span id="fixPatrolState" class="fix-stamp"></span>
+        </summary>
+        <div class="fix-grp__body" id="fixPatrol"></div>
+      </details>
+
+      <details class="fix-grp">
+        <summary>
+          <span data-i18n="fix.tiers">手动刷新（由轻到重）</span>
+        </summary>
+        <div class="fix-grp__body">
+          <div class="fix-btns">
+            <button id="fixBuffers" class="sh-btn sh-btn--sm" type="button" data-i18n="fix.buffers">刷新缓冲</button>
+            <button id="fixBalls" class="sh-btn sh-btn--sm" type="button" data-i18n="fix.balls">重建球轨</button>
+            <button id="fixScene" class="sh-btn sh-btn--sm" type="button" data-i18n="fix.scene">重建场景</button>
+            <button id="fixPost" class="sh-btn sh-btn--sm" type="button" data-i18n="fix.post">重建后期管线</button>
+          </div>
+          <div class="fix-btns">
+            <button id="fixContext" class="sh-btn sh-btn--sm sh-btn--danger" type="button" data-i18n="fix.context">重置渲染上下文</button>
+          </div>
+          <div class="cam-note" data-i18n="fix.note">画面里有该消失却没消失的东西时从上往下按：多数到第一或第二步就干净了。「重建场景」会重算全部挤出几何，大谱面要等几百毫秒；「重置渲染上下文」会黑一下再回来，只在前三步都不管用、或显卡驱动报错时用。</div>
+        </div>
+      </details>
+    </div>
+  </div>
+
+  <div id="info" data-i18n="p4.info.waiting">等待导入乐谱</div>
+  </div>
+
+  <div id="hint" data-i18n="p4.hint"></div>
+
+  <div id="empty">
+    <div class="box">
+      <h2 data-i18n="p4.empty.title"></h2>
+      <p data-i18n="p4.empty.desc"></p>
+      <div><button id="goImport" class="sh-btn sh-btn--primary" type="button" data-i18n="p4.empty.go"></button></div>
+    </div>
+  </div>
+
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>符号对照 · 人工连线基准</title>
+  <style>
+    :root { --bg:#101418; --panel:#1a2026; --border:#2a323a; --text:#e8edf2; --dim:#8a94a0; --accent:#4da3ff; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font: 13px/1.5 system-ui, sans-serif; }
+    #wrap { display: flex; flex-direction: column; height: 100vh; }
+    #top {
+      display: flex; gap: 10px; padding: 8px 12px; background: var(--panel);
+      border-bottom: 1px solid var(--border); align-items: center; flex-wrap: wrap;
+    }
+    #top h1 { font-size: 14px; }
+    #top button, #top label.btn {
+      padding: 4px 10px; font-size: 12px; cursor: pointer;
+      background: #222a32; color: var(--text); border: 1px solid var(--border); border-radius: 4px;
+    }
+    #top select { font-size: 12px; background: #222a32; color: var(--text); }
+    #top a.btn { font-size: 12px; color: var(--accent); text-decoration: none; border: 1px solid var(--border); padding: 3px 8px; border-radius: 4px; }
+    .sep { width: 1px; height: 20px; background: var(--border); }
+    .spacer { flex: 1; }
+    #stats, #manualCount { color: var(--dim); font-variant-numeric: tabular-nums; }
+    #hint { color: var(--dim); font-size: 11px; }
+    #main { display: flex; flex: 1; min-height: 0; }
+    #svgPane {
+      width: 30%; min-width: 300px; overflow: auto; background: #fff; border-right: 1px solid var(--border);
+      padding: 8px; position: relative;
+    }
+    #svgPane .lbl { position: sticky; top: 0; background: rgba(255,255,255,.94); color:#333; font-size: 12px; padding: 3px 6px; z-index: 5; }
+    #svgRef { display: block; }
+    #svgRef svg { background: #fff; }
+    #canvasPane { flex: 1; position: relative; background: #fff; min-width: 0; }
+    #canvasPane canvas { width: 100%; height: 100%; display: block; background: #fff; }
+    #dbg {
+      position: absolute; right: 8px; top: 8px; width: 340px; max-height: 70%;
+      overflow: auto; background: rgba(16,20,24,.95); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0 0 4px; font: 11px/1.5 ui-monospace, monospace; color: var(--dim);
+      z-index: 10; display: flex; flex-direction: column;
+    }
+    #dbg .dhead { padding: 4px 8px; color: var(--text); font-weight: 600; cursor: pointer; user-select: none; display: flex; gap: 8px; }
+    #dbg .dhead .tg { font-size: 10px; color: var(--dim); }
+    #dbg .dbody { overflow: auto; }
+    #dbg .drow { padding: 2px 8px; white-space: pre; cursor: pointer; }
+    #dbg .drow:hover { background: rgba(255,255,255,.06); }
+    #dbg .drow.hl { background: rgba(77,163,255,.25); color: #fff; outline: 1px solid #4da3ff88; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="top">
+      <h1>符号对照 · 人工连线基准</h1>
+      <span class="sep"></span>
+      <button id="reload">重新构建</button>
+      <button id="flipbtn">谱号翻转: 正</button>
+      <select id="view">
+        <option value="ortho" selected>正视（正交，对照 2D）</option>
+        <option value="persp">透视斜角</option>
+      </select>
+      <span id="mkToggles" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"></span>
+      <a class="btn" href="./index.html">→ 原测试页</a>
+      <span class="sep"></span>
+      <select id="corrView" title="连线视图过滤">
+        <option value="all" selected>全部连线</option>
+        <option value="manual">只看人工</option>
+        <option value="auto">只看自动</option>
+      </select>
+      <button id="manualClear">清除人工</button>
+      <button id="manualExport">导出基准</button>
+      <label class="btn">导入基准<input id="manualImport" type="file" accept="application/json,.json" style="display:none" /></label>
+      <span id="manualCount">人工 0 · 删除 0</span>
+      <span class="spacer"></span>
+      <input id="timeBar" type="range" min="0" max="1000" value="0" style="width:180px" />
+      <span id="timeVal">0.00s</span>
+      <button id="playBtn">播放</button>
+      <span id="stats"></span>
+      <div id="hint" style="width:100%;color:#8a94a0;font-size:11px">
+        操作：<b>点线</b>=选中（变黄加粗）· <b>拖端点</b>=黄虚线新建（允许跨谱表/跨声部）· <b>Delete</b>=删线（记入基准）· <b>Esc</b>=取消选中。人工结果自动存 localStorage，刷新不丢；可导出为 JSON 基准。
+      </div>
+    </div>
+    <div id="main">
+      <div id="svgPane">
+        <div class="lbl">2D 谱面（点线选中 · 拖端点手连 · Delete 删线）</div>
+        <div id="svgRef"></div>
+      </div>
+      <div id="canvasPane">
+        <canvas id="gl"></canvas>
+        <pre id="dbg"><div class="dhead"><span>元素映射对照表</span><span class="tg">点击收起/展开</span></div><div class="dbody"></div></pre>
+      </div>
+    </div>
+  </div>
+  <script>window.__SCORE_XML = 'symbols.xml'</script>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

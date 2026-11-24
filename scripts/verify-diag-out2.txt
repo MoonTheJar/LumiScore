@@ -1,0 +1,58 @@
+diag visible: true
+{
+ "diag-viewport": [
+  "inner = 360 x 632",
+  "outer = 522 x 632",
+  "screen = 360 x 632",
+  "dpr = 1",
+  "iframe? = 独立页面",
+  "referrer = (无)",
+  "href = http://127.0.0.1:8124/index.html"
+ ],
+ "diag-safe": [
+  "env() = T0 R0 B0 L0n",
+  "CSS env 支持 = 支持y"
+ ],
+ "diag-css": [
+  "color-mix() = 支持y",
+  "100dvh = 支持y",
+  "100svh = 支持y",
+  "aspect-ratio 属性 = 支持y",
+  "container queries = 支持y",
+  ":has() = 支持y",
+  "gap (flex) = 支持y",
+  "clamp() = 支持y",
+  "backdrop-filter = 支持y",
+  "position:sticky = 支持y"
+ ],
+ "diag-container": [
+  "UA = Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safa",
+  "window.toy = undefinedn",
+  "biliInjectV2 = undefinedn",
+  "navigator.share = truey",
+  "MediaRecorder = truey",
+  "canvas.captureStream = truey",
+  "WebGL = 2.0"
+ ],
+ "diag-res": [
+  "官方 SDK = 已加载 52msy",
+  "compat.js = 已加载 15msy",
+  "toy-sdk.js = 已加载 18msy",
+  "export-test.js = 已加载 18msy",
+  "test.js = 已加载 20msy",
+  "shell.css = 已加载 10msy",
+  "test.css = 已加载 14msy",
+  "logo = 已加载 15msy"
+ ],
+ "diag-js": [
+  "data-mode = prod",
+  "compat.js 执行 = 是y",
+  "toy-sdk.js 执行 = 是y",
+  "test.js 执行 (setPage) = 是y",
+  "export-test.js 执行 = 是y",
+  "document.readyState = complete",
+  "load 事件 = 进行中/未触发"
+ ]
+}
+after enter: {"diagGone":true,"mode":"prod","pageNum":"1","topbarH":69}
+errors: [console] Failed to load resource: the server responded with a status of 404 (File not found)

@@ -1,0 +1,27 @@
+=== https://www.bilibilitoy.com/toy/preview/author_fsZhkOwm/ ===
+  index.html -> ERR 405
+  shell.css -> 200
+  test.css -> 200
+  compat.js -> 200
+  toy-sdk.js -> 200
+  export-test.js -> 200
+  test.js -> 200
+  icons/lumiscore-logo.svg -> 200
+=== https://www.bilibilitoy.com/toy/lumiscore-sdk-test/ ===
+  index.html -> ERR 405
+  shell.css -> 200
+  test.css -> 200
+  compat.js -> ERR 404
+  toy-sdk.js -> 200
+  export-test.js -> ERR 404
+  test.js -> 200
+  icons/lumiscore-logo.svg -> 200
+=== https://www.bilibilitoy.com/toy/lumiscore-sdk-test/51035314058240/ ===
+  index.html -> ERR 405
+  shell.css -> ERR 404
+  test.css -> ERR 404
+  compat.js -> ERR 404
+  toy-sdk.js -> ERR 404
+  export-test.js -> ERR 404
+  test.js -> ERR 404
+  icons/lumiscore-logo.svg -> ERR 404

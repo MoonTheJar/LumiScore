@@ -1,0 +1,7 @@
+P1: {"num":"1","floatDisp":"none","float":"hidden","topbar":{"top":0,"h":69}}
+P2: {"num":"2","floatDisp":"block","float":{"top":615,"bottom":700,"h":85,"w":390},"topbar":{"top":0,"h":69}}
+P3: {"num":"3","floatDisp":"block","float":{"top":615,"bottom":700,"h":85,"w":390},"topbar":{"top":0,"h":69}}
+P4: {"num":"4","floatDisp":"none","float":"hidden","topbar":{"top":0,"h":69}}
+P5: {"num":"5","floatDisp":"block","float":{"top":615,"bottom":700,"h":85,"w":390},"topbar":{"top":0,"h":69}}
+P6: {"num":"6","floatDisp":"none","float":"hidden","topbar":{"top":0,"h":69}}
+errors: (none)

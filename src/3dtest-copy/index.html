@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D 空谱映射测试</title>
+  <style>
+    :root { --bg:#101418; --panel:#1a2026; --border:#2a323a; --text:#e8edf2; --dim:#8a94a0; --accent:#4da3ff; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: var(--bg); color: var(--text); font: 13px/1.5 system-ui, sans-serif; }
+    #wrap { display: flex; flex-direction: column; height: 100vh; }
+    #top {
+      display: flex; gap: 12px; padding: 8px 12px; background: var(--panel);
+      border-bottom: 1px solid var(--border); align-items: center; flex-wrap: wrap;
+    }
+    #top h1 { font-size: 14px; }
+    #top button { padding: 4px 12px; font-size: 12px; cursor: pointer; }
+    #top select { font-size: 12px; }
+    .spacer { flex: 1; }
+    #stats { color: var(--dim); font-variant-numeric: tabular-nums; }
+    #main { display: flex; flex: 1; min-height: 0; }
+    #svgPane {
+      width: 26%; min-width: 240px; overflow: auto; background: #fff; border-right: 1px solid var(--border);
+      padding: 8px; position: relative;
+    }
+    #svgPane .lbl { position: sticky; top: 0; background: rgba(255,255,255,.92); color:#333; font-size: 12px; padding: 2px 6px; z-index: 5; }
+    #svgRef { display: block; }
+    #svgRef svg { background: #fff; }
+    #canvasPane { flex: 1; position: relative; background: #fff; min-width: 0; }
+    #canvasPane canvas { width: 100%; height: 100%; display: block; background: #fff; }
+    #dbg {
+      position: absolute; right: 8px; top: 8px; width: 360px; max-height: 72%;
+      overflow: auto; background: rgba(16,20,24,.95); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0 0 4px; font: 11px/1.5 ui-monospace, monospace; color: var(--dim);
+      z-index: 10; display: flex; flex-direction: column;
+    }
+    #dbg .dhead { padding: 4px 8px; color: var(--text); font-weight: 600; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; }
+    #dbg .dhead .tg { font-size: 10px; color: var(--dim); }
+    #dbg .dbody { overflow: auto; }
+    #dbg.collapsed .dbody { display: none; }
+    #dbg .drow { padding: 2px 8px; white-space: pre; cursor: pointer; }
+    #dbg .drow:hover { background: rgba(255,255,255,.06); }
+    #dbg .drow.hl { background: rgba(77,163,255,.25); color: #fff; outline: 1px solid #4da3ff88; }
+    .sel { outline: 2px solid #f00; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="top">
+      <h1>空谱 2D ↔ 3D 映射测试</h1>
+      <a class="btn" style="font-size:12px;color:#4da3ff;text-decoration:none" href="./symbols.html">→ 符号对照·人工基准</a>
+      <button id="reload">重新构建</button>
+      <button id="flipbtn">谱号翻转: 正</button>
+      <select id="view">
+        <option value="ortho" selected>正视（正交，对照 2D）</option>
+        <option value="persp">透视斜角</option>
+      </select>
+      <select id="corrView" title="连线视图过滤">
+        <option value="all" selected>全部连线</option>
+        <option value="manual">只看人工</option>
+        <option value="auto">只看自动</option>
+      </select>
+      <button id="manualClear">清除人工</button>
+      <button id="manualExport">导出基准</button>
+      <label class="btn" style="font-size:12px;cursor:pointer">导入基准<input id="manualImport" type="file" accept="application/json,.json" style="display:none" /></label>
+      <span id="manualCount" style="color:#8a94a0;font-size:12px">人工 0 · 删除 0</span>
+      <span id="mkToggles" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"></span>
+      <input id="timeBar" type="range" min="0" max="1000" value="0" style="width:200px" />
+      <span id="timeVal">0.00s</span>
+      <button id="playBtn">播放</button>
+      <span class="spacer"></span>
+      <span id="stats"></span>
+    </div>
+    <div id="main">
+      <div id="svgPane">
+        <div class="lbl">2D 原始 SVG（点击→高亮 · 滚轮缩放 · 双击→联动聚焦 · 彩色折线=球轨迹，双击端点可拖动，绿=正确红=错误）</div>
+        <div id="svgRef"></div>
+      </div>
+      <div id="canvasPane">
+        <canvas id="gl"></canvas>
+        <pre id="dbg"><div class="dhead"><span>元素映射对照表</span><span class="tg">点击收起/展开</span></div><div class="dbody"></div></pre>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,2 @@
+frame: https://www.bilibilitoy.com/toy/lumiscore-sdk-test/51035314058240-v39942/index.html?_tk=MTc5Mzc4MzA0OA.bf2b2c0bb863dd1e38b1c6d725f478b3df619f65c48807b
+official v39942: {"scripts":["toy-sdk.js","toy-sdk.js","export-test.js","test.js"],"compatReferenced":false,"diagHidden":true,"debugBar":true,"title":"示例曲.mid","step":"导入","settingsBtn":true,"pageCount":"第1/6页","topbarGroup":"34x30","bootToy":true}

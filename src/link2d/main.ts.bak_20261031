@@ -1,0 +1,1502 @@
+// ── 第 3 步：连线检查与手动精修 ──────────────────────────────────
+// 自动连线算法照搬 3dtest-copy r44：3 范围策略(voice/voiceStable/staff) ×
+// 2 后继时机(onset/release)，见 shared/auto-links.ts。
+//
+// 产品规则：
+//   ① 加载时按策略自动连线一次，立即清理「首尾同刻」的错误边；
+//   ② 此后完全由用户操作（增删边、增删路径、跨轨串连均可），系统不拦截只标红；
+//      唯一前端硬拦截 = 同刻端点之间禁止连线；
+//   ③ 下一步统一判定：每路径从起点线到终点线单向不倒流、首尾相接、中间无断即可；
+//      漏音（端点完全没人连）只标注，不阻断。
+//   tie 续接音不产生端点、不触发演奏。
+
+// 黑底白谱（两 2D 页共享 sessionStorage）
+if (sessionStorage.getItem('midee.dark2d') === '1') document.body.classList.add('dark2d')
+
+import createVerovioModule from 'verovio/wasm'
+import { VerovioToolkit as VrvToolkitClass } from 'verovio/esm'
+import { Midi } from '@tonejs/midi'
+import { goStep, mountShell } from '../shell/shell'
+import { applyI18n, onLocaleChange, t } from '../shell/i18n'
+import { createPlayerBar, type PlayerBarHandle } from '../shell/playerbar'
+import { mergeTieEvents, parseMidiEvents } from '../score/midiEvents'
+import { MideePlayer, playbackMidiB64 } from '../3dpreview/player'
+import {
+  parseXmlHeads,
+  computeAutoGraph,
+  loadAutoPolicy,
+  saveAutoPolicy,
+  pairEq,
+  DEFAULT_AUTO_POLICY,
+  type AutoPolicy,
+  type AutoScope,
+  type AutoSucc,
+  type XmlHead,
+} from '../shared/auto-links'
+import {
+  applySymbolEdits,
+  convertSvgTextsToPaths,
+  ensurePathFonts,
+  loadSymbolEdits,
+} from '../shared/symbol-text'
+import { ensureNoteTypes } from '../shared/score-preprocess'
+
+const SCALE = 45
+const SVG_NS = 'http://www.w3.org/2000/svg'
+const LINKS_KEY = 'midee.links'
+const TERM_MARGIN = 90 // 起终点竖线距首尾符头的留白（SVG 用户单位）
+const PALETTE = [
+  '#2266ff', '#e11d48', '#16a34a', '#ea580c', '#7c3aed',
+  '#0891b2', '#ca8a04', '#be185d', '#15803d', '#4f46e5',
+  '#9333ea', '#0d9488',
+]
+
+interface ToolkitLike {
+  setOptions(o: Record<string, unknown>): void
+  loadData(x: string): boolean
+  renderToSVG(page?: number): string
+  renderToTimemap(): { on?: string[]; tstamp?: number }[]
+}
+
+// ── DOM / 外壳 ────────────────────────────────────────────────
+const scoreEl = document.getElementById('score')!
+const innerEl = document.getElementById('score')!.querySelector<HTMLElement>('#scoreInner')!
+const hintEl = document.getElementById('hint')!
+const emptyEl = document.getElementById('empty')!
+document.getElementById('emptyNext')?.addEventListener('click', () => { goStep(1) })
+
+let shell: ReturnType<typeof mountShell>
+let bar: PlayerBarHandle | null = null
+
+// ── 数据模型 ──────────────────────────────────────────────────
+type Pair = [string, string]
+interface PathData {
+  id: string
+  color: string
+  /** 归属键：有原始 MIDI 时为 't0'/'t1'…（原曲轨道，默认路径数=轨道数）；XML 直导时为 lane 键 */
+  trackKey: string
+  /** 自动边（重算策略时整体替换；受 removed 全局抑制） */
+  auto: Pair[]
+  /** 人工新增边（跨轨允许；重算策略时保留） */
+  manual: Pair[]
+  /** 起点/终点线上锚点的 y 列表（自动策略恰好 1 个；手动可多个起点/终点） */
+  ayStart: number[]
+  ayEnd: number[]
+  /** false=锚点由自动策略放置（单锚点=同轨头/尾端点的广义费马点，随铺刷新）；true=用户手动打点 */
+  anchorsManual: boolean
+}
+interface LinksStore {
+  v: 5
+  policy: AutoPolicy
+  offStart: number
+  offEnd: number
+  paths: PathData[]
+  selected: string
+  /** 用户从自动结果里删掉的边（重算后继续抑制） */
+  removed: Pair[]
+}
+
+interface Endpoint {
+  id: string
+  x: number; y: number
+  time: number // 秒（Verovio timemap tstamp）
+  midi: number
+  lane: string
+  /** 归属键：'t0'…=原始 MIDI 轨道；'lane:…'=XML 直导按声部 */
+  trackKey: string
+  nodeIdx: number
+  head: XmlHead
+}
+
+let heads: XmlHead[] = []
+let epById = new Map<string, Endpoint>()
+let endpoints: Endpoint[] = []
+let svg: SVGSVGElement | null = null
+let edgeLayer: SVGGElement | null = null
+let nodeLayer: SVGGElement | null = null
+let termLayer: SVGGElement | null = null
+let ballLayer: SVGGElement | null = null
+let startX = 0
+let endX = 0
+let musicDur = 0
+let store: LinksStore
+let pathSeq = 0
+
+function emptyStore(policy: AutoPolicy): LinksStore {
+  return { v: 5, policy, offStart: 0.7, offEnd: 0.7, paths: [], selected: '', removed: [] }
+}
+function loadStore(): LinksStore {
+  const name = sessionStorage.getItem('midee.name') ?? 'untitled'
+  const policy = loadAutoPolicy(name)
+  try {
+    const raw = sessionStorage.getItem(LINKS_KEY)
+    if (raw) {
+      const o = JSON.parse(raw) as Partial<LinksStore>
+      if (o && o.v === 5 && Array.isArray(o.paths) && o.paths.every((p) => typeof p.trackKey === 'string' && Array.isArray(p.ayStart) && Array.isArray(p.ayEnd) && typeof p.anchorsManual === 'boolean')) {
+        return {
+          v: 5,
+          policy: o.policy ?? policy,
+          offStart: Number(o.offStart) || 0.7,
+          offEnd: Number(o.offEnd) || 0.7,
+          paths: o.paths,
+          selected: o.selected ?? '',
+          removed: Array.isArray(o.removed) ? o.removed : [],
+        }
+      }
+    }
+  } catch { /* 新建 */ }
+  return emptyStore(policy)
+}
+function persist(): void {
+  try { sessionStorage.setItem(LINKS_KEY, JSON.stringify(store)) } catch { /* noop */ }
+}
+function selectedPath(): PathData | null {
+  return store.paths.find((p) => p.id === store.selected) ?? null
+}
+function pathColor(id: string): string {
+  return store.paths.find((p) => p.id === id)?.color ?? '#888'
+}
+
+/** 路径当前全部边（auto 去掉全局已删，再并 manual），带来源标记 */
+function pathEdges(p: PathData): { pair: Pair; manual: boolean }[] {
+  const out: { pair: Pair; manual: boolean }[] = []
+  for (const e of p.auto) {
+    if (!store.removed.some((r) => pairEq(e[0], e[1], r[0], r[1]))) out.push({ pair: e, manual: false })
+  }
+  for (const e of p.manual) out.push({ pair: e, manual: true })
+  return out
+}
+function allPairs(): { path: PathData; pair: Pair; manual: boolean }[] {
+  const out: ReturnType<typeof allPairs> = []
+  for (const p of store.paths) for (const e of pathEdges(p)) out.push({ path: p, pair: e.pair, manual: e.manual })
+  return out
+}
+
+// ── Verovio 流式渲染：骨架先挂，小节逐帧向后铺开（同 2D 页） ───────
+let tk: ToolkitLike | null = null
+let vbW = 0
+let vbH = 0
+let revealGen = 0
+let revealDone = false
+let measureQueue: SVGGElement[] = []
+let measureParent: SVGGElement | null = null
+let measureAnchor: ChildNode | null = null
+let pumpQueued = false
+const INITIAL_MEASURES = 6
+const MEASURES_PER_FRAME = 2
+const REVEAL_CHUNK = 4
+const REVEAL_GUARD = 24
+
+async function prepareToolkit(xml: string): Promise<boolean> {
+  try {
+    const mod = await createVerovioModule()
+    const inst = new VrvToolkitClass(mod as never) as unknown as ToolkitLike
+    inst.setOptions({
+      pageWidth: 1200, scale: SCALE, spacingLinear: 0.25, spacingNonLinear: 0.6,
+      breaks: 'none', footer: 'none', header: 'none', font: 'Bravura',
+    })
+    inst.loadData(ensureNoteTypes(xml)) // 与第五页回退渲染同一份预处理，两页渲染输入完全一致
+    tk = inst
+    return true
+  } catch (err) {
+    hintEl.textContent = `Verovio 初始化失败：${String(err)}`
+    return false
+  }
+}
+
+/** 流式挂载谱面（要求 heads/时间/轨道/路径已就绪）。
+ *  挂载前先完成：第二页文字编辑原样应用 → 全部 <text> 冻结为 <path> 矢量轮廓
+ *  （Liberation=Times 文本 / Bravura=SMuFL 字形 / Noto=中文），并把这份纯 path
+ *  的完整 SVG 存入 midee.pathSvg——第五页直接消费，进第五页前只处理 path 元素。 */
+async function mountSvgProgressive(): Promise<void> {
+  const inst = tk!
+  // 离屏解析，小节拆下来逐批挂载（避免大谱一次性插入长任务）
+  try {
+    const parsed = new DOMParser().parseFromString(inst.renderToSVG(1), 'image/svg+xml')
+    const srcSvg = parsed.documentElement as unknown as SVGSVGElement
+    // ── 第二页编辑（改字/删除/偏移/缩放/加粗/自由文字）原样映射 ──
+    // 各步独立降级：任何失败只损失对应增强（编辑/矢量冻结），绝不挡谱面挂载
+    const edits = loadSymbolEdits()
+    if (edits) {
+      try {
+        applySymbolEdits(srcSvg, edits)
+      } catch (err) {
+        console.warn('[连线页] 应用第二页编辑失败（已忽略，按未编辑谱面继续）', err)
+      }
+    }
+    // ── text → path（字体就绪后；失败则保留 text，第五页旧管线兜底） ──
+    let fonts: Awaited<ReturnType<typeof ensurePathFonts>> = null
+    try {
+      fonts = await ensurePathFonts()
+    } catch {
+      fonts = null
+    }
+    if (fonts) {
+      try {
+        convertSvgTextsToPaths(srcSvg, fonts)
+      } catch (err) {
+        console.warn('[连线页] text→path 转换失败（已忽略，保留 text）', err)
+      }
+    }
+    try {
+      sessionStorage.setItem('midee.pathSvg', new XMLSerializer().serializeToString(srcSvg))
+    } catch {
+      /* 超限等异常：第五页回退自行渲染+转换 */
+    }
+    const measures = Array.from(srcSvg.querySelectorAll<SVGGElement>('g.measure'))
+    measureParent = (measures[0]?.parentNode as SVGGElement | null) ?? null
+    const lastM = measures[measures.length - 1] ?? null
+    measureAnchor = lastM?.nextSibling ?? null
+    measureQueue = measures
+    for (const m of measures) m.remove()
+
+    const old = innerEl.querySelector('svg')
+    if (old) old.remove()
+    svg = document.adoptNode(srcSvg)
+    innerEl.appendChild(svg)
+    const w = parseFloat(svg.getAttribute('width') ?? '0')
+    const h = parseFloat(svg.getAttribute('height') ?? '0')
+    vbW = w; vbH = h
+    if (w && h) {
+      svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
+      svg.dataset.vbW = String(w)
+      svg.dataset.vbH = String(h)
+    }
+    edgeLayer = document.createElementNS(SVG_NS, 'g')
+    edgeLayer.setAttribute('class', 'lk-layer lk-edges')
+    nodeLayer = document.createElementNS(SVG_NS, 'g')
+    nodeLayer.setAttribute('class', 'lk-layer lk-nodes')
+    termLayer = document.createElementNS(SVG_NS, 'g')
+    termLayer.setAttribute('class', 'lk-terms')
+    ballLayer = document.createElementNS(SVG_NS, 'g')
+    ballLayer.setAttribute('class', 'lk-balls')
+    // 层级：竖线 → 连线 → 端点 → 圆点；每层独立清空，避免播放帧重复叠加
+    svg.append(termLayer, edgeLayer, nodeLayer, ballLayer)
+
+    // 竖线初始位置（末端点挂载后再收敛到真实首/尾音）
+    startX = 56
+    endX = vbW - 56
+    applyScale()
+    revealGen++
+    revealDone = false
+    pumpQueued = false
+    revealMeasures(INITIAL_MEASURES)
+    queuePump()
+  } catch (err) {
+    hintEl.textContent = `Verovio 渲染失败：${String(err)}`
+  }
+}
+
+function revealMeasures(max: number): number {
+  if (!measureParent) return 0
+  let n = 0
+  while (measureQueue.length && n < max) {
+    const detached = measureQueue.shift()!
+    measureParent.insertBefore(document.adoptNode(detached), measureAnchor)
+    n++
+  }
+  if (n) onRevealProgress()
+  if (!measureQueue.length && !revealDone) {
+    revealDone = true
+    onRevealProgress()
+  }
+  return n
+}
+function pump(): void {
+  pumpQueued = false
+  if (!measureQueue.length) return
+  revealMeasures(MEASURES_PER_FRAME)
+  if (measureQueue.length) queuePump()
+}
+function queuePump(): void {
+  if (pumpQueued) return
+  pumpQueued = true
+  requestAnimationFrame(pump)
+}
+function measureTranslateX(m: Element): number {
+  const mm = /translate\(\s*(-?[\d.]+)/.exec(m.getAttribute('transform') ?? '')
+  return mm && mm[1] !== undefined ? parseFloat(mm[1]) : 0
+}
+function mountedFrontierX(): number {
+  if (!svg) return 0
+  const mounted = Array.from(svg.querySelectorAll<SVGGElement>('g.measure'))
+  const last = mounted[mounted.length - 1]
+  if (!last) return 0
+  let w = 0
+  try { w = last.getBBox().width } catch { w = 0 }
+  return measureTranslateX(last) + w
+}
+function ensureRevealToUserX(targetX: number): void {
+  let guard = 0
+  while (measureQueue.length && mountedFrontierX() < targetX && guard < REVEAL_GUARD) {
+    revealMeasures(REVEAL_CHUNK)
+    guard++
+  }
+  if (measureQueue.length) queuePump()
+}
+
+// ── 时间/轨道（不依赖 DOM，流式铺开前就算好） ───────────────────
+// 关键：XML 是 midiToXml(midee.midiOrig) 生成的，voice 编号在生成时就与原始轨道
+// 一一确定对应（见 shared/midi-xml.ts 的 trackAlloc），这里【原封不动复刻同一分配
+// 规则】反推出 staff|voice → 轨道，绝不靠时间/音高事后匹配（左右手同音高重叠会
+// 错配，导致串轨与端点看似错位）。
+const headTime = new Map<string, number>() // noteId → 秒
+interface OrigTrack { name: string; notes: { midi: number }[] }
+/** 稀疏数组：下标 = 原始 MIDI 轨号（含空轨），仅非空轨有值 */
+let origTracks: (OrigTrack | null)[] = []
+/** 非空轨道的下标（路径顺序） */
+let origTrackIdx: number[] = []
+/** 'staff|voice' → 't<原始轨号>' */
+const svToTrack = new Map<string, string>()
+
+function buildTimeAndTracks(xml: string): void {
+  heads = parseXmlHeads(xml)
+  headTime.clear()
+  // 单事件源：优先用共享 MIDI 事件表（与第五页完全同一份解析 + tie 合并）；
+  // 数量对齐才采纳，否则保留 Verovio timemap（渲染引擎给出的时间映射）兜底并告警。
+  const midiEvs = parseMidiEvents(sessionStorage.getItem('midee.midi'))
+  if (midiEvs.length) {
+    const hs = heads
+      .map((h, i) => ({ h, i }))
+      .filter((x) => !x.h.rest && !x.h.tieCont && !x.h.grace && x.h.midi !== null)
+    const evs = mergeTieEvents(midiEvs)
+    hs.sort((a, b) => a.h.onset - b.h.onset || (a.h.midi ?? 0) - (b.h.midi ?? 0))
+    if (hs.length === evs.length) {
+      hs.forEach((x, k) => headTime.set(x.h.noteId, evs[k]!.time))
+    } else {
+      console.warn(
+        `[连线页] 符头数(${hs.length}) ≠ MIDI 事件数(${evs.length})，退回 Verovio 时间映射`,
+      )
+    }
+  }
+  if (!headTime.size) {
+    for (const row of tk!.renderToTimemap()) {
+      if (row.on && row.tstamp !== undefined) {
+        for (const id of row.on) if (!headTime.has(id)) headTime.set(id, row.tstamp / 1000)
+      }
+    }
+  }
+  const times = heads.filter((h) => !h.rest && !h.tieCont && headTime.has(h.noteId)).map((h) => headTime.get(h.noteId)!)
+  musicDur = times.length ? Math.max(...times) : 0
+
+  origTracks = []
+  origTrackIdx = []
+  svToTrack.clear()
+  const origB64 = sessionStorage.getItem('midee.midiOrig')
+  if (origB64) {
+    try {
+      const bin = atob(origB64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+      const midi = new Midi(bytes)
+      origTracks = midi.tracks.map((tr, i) =>
+        tr.notes.length
+          ? { name: tr.name?.trim() || `${t('l3.track')} ${i + 1}`, notes: tr.notes.map((n) => ({ midi: n.midi })) }
+          : null,
+      )
+      origTrackIdx = origTracks.map((tr, i) => (tr ? i : -1)).filter((i) => i >= 0)
+
+      // 复刻 midi-xml.ts trackAlloc：voiceCounter 仅在非空轨间递增；
+      // 跨大谱表轨占两个 voice（staff1/staff2 各一），否则按音高中位数单 voice。
+      let voiceCounter = 0
+      const nextVoice = (): number => ++voiceCounter
+      origTracks.forEach((tr, ti) => {
+        if (!tr) return
+        const mids = tr.notes.map((n) => n.midi)
+        const min = Math.min(...mids)
+        const max = Math.max(...mids)
+        if (min < 55 && max >= 62) {
+          const v1 = nextVoice(), v2 = nextVoice()
+          svToTrack.set(`1|${v1}`, `t${ti}`)
+          svToTrack.set(`2|${v2}`, `t${ti}`)
+        } else {
+          const sorted = [...mids].sort((a, b) => a - b)
+          const med = sorted[Math.floor(sorted.length / 2)]!
+          const staff: 1 | 2 = med >= 60 ? 1 : 2
+          svToTrack.set(`${staff}|${nextVoice()}`, `t${ti}`)
+        }
+      })
+    } catch {
+      origTracks = []
+      origTrackIdx = []
+    }
+  }
+}
+/**
+ * 符头所属轨道键：
+ *  · MIDI 导入：复刻 midiToXml 的 voice→轨道映射（跨大谱表的一只手可占高低两个谱表）；
+ *  · XML 直导（无原始 MIDI）：标准 MIDI 由 webmscore 从该 XML 导出，按 part+staff
+ *    分轨，因此归属键用 part|staff（同谱表内的多个 voice 合并为一条路径），
+ *    保证路径数与 MIDI 轨道一一对应，不会出现「两轨四条路径」。
+ */
+function trackKeyOf(h: XmlHead): string {
+  return svToTrack.get(`${h.staff}|${h.voice}`) ?? `staff:${h.part}|${h.staff}`
+}
+function trackLabel(key: string): string {
+  if (key.startsWith('t')) {
+    const i = Number(key.slice(1))
+    return origTracks[i]?.name ?? `${t('l3.track')} ${i + 1}`
+  }
+  if (key.startsWith('manual:')) return t('l3.customPath')
+  const m = /^staff:(\d+)\|(\d+)$/.exec(key)
+  if (m) return `P${Number(m[1]) + 1}·${Number(m[2]) === 1 ? '高' : '低'}`
+  return key
+}
+
+// ── 端点表：只包含已挂载小节里的符头（流式过程中逐步出现） ─────────
+function scanMountedEndpoints(): void {
+  if (!svg) return
+  const r = svg.getBoundingClientRect()
+  const vbw = Number(svg.dataset.vbW) || r.width
+  const pxPerUnit = r.width / vbw
+  const ep: Endpoint[] = []
+  heads.forEach((h, i) => {
+    if (h.rest || h.tieCont || !h.noteId) return
+    const g = svg!.querySelector<SVGGElement>(`g.note#${CSS.escape(h.noteId)}`)
+    if (!g) return // 小节尚未挂载
+    // 端点必须落在【符头】中心：g.note 的包围盒含符杆/符尾，取其中心会系统性
+    // 偏向符杆一侧（1x 偏 10~12px、放大后更明显）。优先 g.notehead，
+    // 找不到再退回整个 note 包围盒。
+    const headEl = g.querySelector<SVGGElement>('g.notehead') ?? g
+    const nr = headEl.getBoundingClientRect()
+    if (!nr.width) return
+    const time = headTime.get(h.noteId)
+    if (time === undefined) return // 装饰音等无时间证据 → 不做端点
+    ep.push({
+      id: h.noteId,
+      x: (nr.left + nr.width / 2 - r.left) / pxPerUnit,
+      y: (nr.top + nr.height / 2 - r.top) / pxPerUnit,
+      time,
+      midi: h.midi ?? 0,
+      lane: `${h.part}|${h.staff}|${h.voice}`,
+      trackKey: trackKeyOf(h),
+      nodeIdx: i,
+      head: h,
+    })
+  })
+  epById = new Map(ep.map((e) => [e.id, e]))
+  endpoints = ep.sort((a, b) => a.time - b.time || a.y - b.y)
+  if (endpoints.length) {
+    startX = Math.min(...ep.map((e) => e.x)) - TERM_MARGIN
+    if (revealDone) endX = Math.max(...ep.map((e) => e.x)) + TERM_MARGIN
+  }
+}
+
+/** 每批小节挂载后：补端点、刷新自动锚点（头/尾中位数随已铺小节收敛）、重绘 */
+function onRevealProgress(): void {
+  scanMountedEndpoints()
+  recomputeAutoAnchors()
+  renderAll(revealDone)
+}
+function pathEndpoints(p: PathData): Endpoint[] {
+  const ids = new Set<string>()
+  for (const [a, b] of [...p.auto, ...p.manual]) {
+    ids.add(a)
+    ids.add(b)
+  }
+  return [...ids].map((id) => epById.get(id)).filter((e): e is Endpoint => !!e).sort((a, b) => a.time - b.time)
+}
+
+// ── 自动连线：照搬测试项目算法 → 同轨边归集（自动绝不跨轨道） ──────
+let graphBuckets = new Map<string, Pair[]>()
+
+function runAuto(policy: AutoPolicy): void {
+  const graph = computeAutoGraph(heads, policy)
+  graphBuckets = new Map()
+  for (const e of graph.edges) {
+    const a = heads[e.from], b = heads[e.to]
+    if (!a || !b) continue
+    // ① 首尾同刻边刷掉（同刻端点之间不连线；同刻簇在播放层按时间聚簇，不需要边）
+    if (Math.abs(a.onset - b.onset) < 1e-6 && a.measure === b.measure) continue
+    // ② 自动连线不允许跨轨道：两端归属不同键直接丢弃（测试项目 voice 边界即此约束）
+    const ka = trackKeyOf(a), kb = trackKeyOf(b)
+    if (ka !== kb) continue
+    const pair: Pair = [a.noteId, b.noteId]
+    const arr = graphBuckets.get(ka) ?? []
+    arr.push(pair)
+    graphBuckets.set(ka, arr)
+  }
+}
+
+function makePath(key: string, colorIdx: number): PathData {
+  return {
+    id: `p${++pathSeq}`,
+    color: PALETTE[colorIdx % PALETTE.length]!,
+    trackKey: key,
+    auto: graphBuckets.get(key) ?? [],
+    manual: [],
+    ayStart: [], ayEnd: [],
+    anchorsManual: false,
+  }
+}
+
+function buildDefaultPathsFromAuto(): void {
+  store.paths = []
+  if (origTrackIdx.length) {
+    // 有多少个（非空）原始轨道就建多少条路径，顺序/名字沿用原始轨
+    origTrackIdx.forEach((ti, colorIdx) => store.paths.push(makePath(`t${ti}`, colorIdx)))
+  } else {
+    // XML 直导：按算法实际产出的归属键建路径
+    ;[...graphBuckets.keys()].sort().forEach((key, i) => store.paths.push(makePath(key, i)))
+  }
+  recomputeAutoAnchors()
+  store.selected = store.paths[0]?.id ?? ''
+}
+
+function rebuildAutoKeepManual(): void {
+  runAuto(store.policy)
+  for (const p of store.paths) p.auto = graphBuckets.get(p.trackKey) ?? []
+  // 新归属键 → 追加路径；人工边/人工锚点保留
+  const used = new Set(store.paths.map((p) => p.trackKey))
+  graphBuckets.forEach((edges, key) => {
+    if (used.has(key) || !edges.length) return
+    store.paths.push(makePath(key, store.paths.length))
+  })
+  recomputeAutoAnchors()
+  if (!store.paths.some((p) => p.id === store.selected)) store.selected = store.paths[0]?.id ?? ''
+}
+
+// ── 头/尾端点与自动锚点（广义费马点 = 一维中位数，使接线总长最短） ─────
+function medianYs(ys: number[]): number | null {
+  if (!ys.length) return null
+  const s = [...ys].sort((a, b) => a - b)
+  const mid = s.length >> 1
+  return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2
+}
+function nearestAnchor(ys: number[], y: number): number {
+  let best = ys[0]!, bd = Infinity
+  for (const a of ys) { const d = Math.abs(a - y); if (d < bd) { bd = d; best = a } }
+  return best
+}
+
+/** 路径的头（无入边）/尾（无出边）端点 id（自动边与人工边合并计算） */
+function pathHeadsTails(p: PathData): { heads: string[]; tails: string[] } {
+  const nodes = new Set<string>()
+  const indeg = new Set<string>()
+  const outAdj = new Map<string, string[]>()
+  for (const [a, b] of [...p.auto, ...p.manual]) {
+    if (!epById.has(a) || !epById.has(b)) continue
+    nodes.add(a); nodes.add(b)
+    indeg.add(b)
+    ;(outAdj.get(a) ?? outAdj.set(a, []).get(a)!).push(b)
+  }
+  const heads: string[] = []
+  const tails: string[] = []
+  for (const id of nodes) {
+    if (!indeg.has(id)) heads.push(id)
+    if (!(outAdj.get(id)?.length)) tails.push(id)
+  }
+  return { heads, tails }
+}
+
+/** 自动锚点：同轨每个头/尾都接到起/终点线上同一个共同最近点（y 的中位数） */
+function recomputeAutoAnchors(): void {
+  for (const p of store.paths) {
+    if (p.anchorsManual) continue
+    const { heads, tails } = pathHeadsTails(p)
+    const hy = heads.map((id) => epById.get(id)?.y).filter((v): v is number => v !== undefined)
+    const ty = tails.map((id) => epById.get(id)?.y).filter((v): v is number => v !== undefined)
+    const sm = medianYs(hy), em = medianYs(ty)
+    p.ayStart = sm === null ? [] : [sm]
+    p.ayEnd = em === null ? [] : [em]
+  }
+}
+
+// ── 校验（只算/标红，不拦截） ───────────────────────────────────
+interface Validation {
+  backward: Set<string> // "pathId|a|b"
+  badNodes: Set<string> // 倒流边涉及的端点 id
+  orphans: Set<string> // 任何路径都没连的端点
+  badAnchors: Set<string> // pathId:start/end
+}
+function validate(): Validation {
+  const v: Validation = { backward: new Set(), badNodes: new Set(), orphans: new Set(), badAnchors: new Set() }
+  const used = new Set<string>()
+  for (const pth of store.paths) {
+    for (const { pair } of pathEdges(pth)) {
+      const [a, b] = pair
+      const ea = epById.get(a), eb = epById.get(b)
+      if (!ea || !eb) continue
+      used.add(a); used.add(b)
+      if (eb.time <= ea.time + 1e-6) {
+        v.backward.add(`${pth.id}|${a}|${b}`)
+        v.badNodes.add(a); v.badNodes.add(b)
+      }
+    }
+    if (!pth.ayStart.length) v.badAnchors.add(`${pth.id}|start`)
+    if (!pth.ayEnd.length) v.badAnchors.add(`${pth.id}|end`)
+  }
+  for (const e of endpoints) if (!used.has(e.id)) v.orphans.add(e.id)
+  return v
+}
+let validation: Validation = { backward: new Set(), badNodes: new Set(), orphans: new Set(), badAnchors: new Set() }
+
+/** 最终判定：每条路径 有起/终锚点、非空、边严格单向（头/尾自动接竖线）；漏音不管 */
+function finalCheck(): string[] {
+  if (!revealDone) return [t('l3.rendering')]
+  const problems: string[] = []
+  for (const pth of store.paths) {
+    const tag = trackLabel(pth.trackKey)
+    if (!pth.ayStart.length || !pth.ayEnd.length) { problems.push(`${tag}：缺少起点或终点打点`); continue }
+    const es = pathEdges(pth)
+    if (!es.length) { problems.push(`${tag}：路径为空`); continue }
+    for (const { pair } of es) {
+      const ea = epById.get(pair[0]), eb = epById.get(pair[1])
+      if (!ea || !eb || eb.time <= ea.time + 1e-6) { problems.push(`${tag}：存在倒流或同刻连线`); break }
+    }
+  }
+  return [...new Set(problems)]
+}
+
+// ── 覆盖层渲染 ────────────────────────────────────────────────
+let pendingFrom: string | null = null
+let selectedEdge: { pathId: string; pair: Pair } | null = null
+let mouseUser: { x: number; y: number } | null = null
+const tempLine = document.createElementNS(SVG_NS, 'path')
+tempLine.setAttribute('class', 'lk-temp')
+tempLine.style.stroke = '#3c4048'
+tempLine.setAttribute('visibility', 'hidden')
+
+function renderAll(save = true): void {
+  if (!edgeLayer || !nodeLayer || !termLayer || !ballLayer) return
+  validation = validate()
+  renderTerms()
+  renderEdges()
+  renderNodes()
+  renderPathWindow()
+  renderBalls(localTau)
+  if (save) persist()
+}
+
+function renderTerms(): void {
+  termLayer!.innerHTML = ''
+  if (!svg) return
+  const vbH = Number(svg.dataset.vbH) || 1000
+  for (const [x, cls, labelKey] of [
+    [startX, 'lk-term-start', '起'],
+    [endX, 'lk-term-end', '终'],
+  ] as const) {
+    const line = document.createElementNS(SVG_NS, 'line')
+    line.setAttribute('class', 'lk-term-line')
+    line.setAttribute('x1', String(x)); line.setAttribute('x2', String(x))
+    line.setAttribute('y1', '0'); line.setAttribute('y2', String(vbH))
+    termLayer!.appendChild(line)
+    const lbl = document.createElementNS(SVG_NS, 'text')
+    lbl.setAttribute('class', 'lk-term-label')
+    lbl.setAttribute('x', String(x)); lbl.setAttribute('y', '40')
+    lbl.setAttribute('text-anchor', 'middle')
+    lbl.textContent = labelKey
+    termLayer!.appendChild(lbl)
+  }
+  for (const p of store.paths) {
+    const mk = (ays: number[], which: 'start' | 'end'): void => {
+      const bad = revealDone && validation.badAnchors.has(`${p.id}|${which}`)
+      ays.forEach((ay, idx) => {
+        const c = document.createElementNS(SVG_NS, 'circle')
+        c.setAttribute('class', `lk-anchor${bad ? ' is-bad' : ''}${p.anchorsManual ? ' is-manual' : ''}`)
+        c.setAttribute('cx', String(which === 'start' ? startX : endX))
+        c.setAttribute('cy', String(ay))
+        c.setAttribute('r', '11')
+        c.dataset.pathId = p.id
+        c.dataset.which = which
+        c.dataset.index = String(idx)
+        if (bad) { c.style.stroke = '#e5232b'; c.style.fill = '#ffe3e4' }
+        else if (p.anchorsManual) { c.style.stroke = p.color; c.style.strokeWidth = '4' }
+        termLayer!.appendChild(c)
+      })
+    }
+    mk(p.ayStart, 'start')
+    mk(p.ayEnd, 'end')
+  }
+}
+
+function renderEdges(): void {
+  edgeLayer!.innerHTML = ''
+  // 连线永远只画一条所属路径颜色的细线；倒流/断线的红色提示只落在端点上。
+  // 注意：Verovio 给 SVG 注入了 #<id> path{stroke:currentColor}，表现属性会被
+  // 覆盖成 currentcolor，必须用内联 style.stroke 才能真正显示路径色。
+  for (const { path: p, pair } of allPairs()) {
+    const a = epById.get(pair[0]), b = epById.get(pair[1])
+    if (!a || !b) continue
+    const g = document.createElementNS(SVG_NS, 'g')
+    g.setAttribute('class', 'lk-edge')
+    if (selectedEdge && selectedEdge.pathId === p.id && pairEq(selectedEdge.pair[0], selectedEdge.pair[1], pair[0], pair[1])) {
+      g.classList.add('is-selected')
+    }
+    const d = `M ${a.x} ${a.y} L ${b.x} ${b.y}`
+    const hit = document.createElementNS(SVG_NS, 'path')
+    hit.setAttribute('class', 'lk-edge-hit')
+    hit.setAttribute('d', d)
+    // Verovio 的 #id path{stroke:currentColor} 会把透明点击带也染成灰带，内联强制透明
+    hit.style.stroke = 'transparent'
+    hit.dataset.pathId = p.id
+    hit.dataset.from = pair[0]
+    hit.dataset.to = pair[1]
+    const line = document.createElementNS(SVG_NS, 'path')
+    line.setAttribute('class', 'lk-edge-line')
+    line.setAttribute('d', d)
+    line.style.stroke = p.color
+    g.append(hit, line)
+    edgeLayer!.appendChild(g)
+  }
+  // 头尾接线：每个头(无入边)→起点线上最近锚点，每个尾(无出边)→终点线上最近锚点；路径色细线
+  for (const pth of store.paths) {
+    const { heads, tails } = pathHeadsTails(pth)
+    const lead = (ids: string[], ays: number[], xLine: number): void => {
+      if (!ays.length) return
+      for (const id of ids) {
+        const e = epById.get(id)
+        if (!e) continue
+        const ay = nearestAnchor(ays, e.y)
+        const path = document.createElementNS(SVG_NS, 'path')
+        path.setAttribute('class', 'lk-edge-line')
+        path.style.stroke = pth.color
+        path.setAttribute('d', `M ${xLine} ${ay} L ${e.x} ${e.y}`)
+        edgeLayer!.appendChild(path)
+      }
+    }
+    lead(heads, pth.ayStart, startX)
+    lead(tails, pth.ayEnd, endX)
+  }
+  if (pendingFrom && mouseUser) {
+    const a = epById.get(pendingFrom)!
+    tempLine.setAttribute('d', `M ${a.x} ${a.y} L ${mouseUser.x} ${mouseUser.y}`)
+    tempLine.style.stroke = selectedPath()?.color ?? '#3c4048'
+    tempLine.setAttribute('visibility', 'visible')
+  } else {
+    tempLine.setAttribute('visibility', 'hidden')
+  }
+  if (!tempLine.parentNode) edgeLayer!.appendChild(tempLine)
+}
+
+function renderNodes(): void {
+  // 端点状态色：问题（孤立/断线/倒流）红；走过/正确绿；待连线用当前路径色圆环；
+  // 其余默认白底深色描边。连线本身始终是路径色，不参与红/绿。
+  nodeLayer!.innerHTML = ''
+  for (const e of endpoints) {
+    const g = document.createElementNS(SVG_NS, 'g')
+    g.setAttribute('class', 'lk-node-g')
+    g.dataset.ep = e.id
+    const hit = document.createElementNS(SVG_NS, 'circle')
+    hit.setAttribute('class', 'lk-node-hit')
+    hit.setAttribute('cx', String(e.x)); hit.setAttribute('cy', String(e.y)); hit.setAttribute('r', '13')
+    const c = document.createElementNS(SVG_NS, 'circle')
+    c.setAttribute('class', 'lk-node')
+    c.setAttribute('cx', String(e.x)); c.setAttribute('cy', String(e.y))
+    c.setAttribute('r', '6.5')
+    // 流式铺开未完成时不标红（未来小节的端点尚未出现，避免一路红闪）
+    const isBad = revealDone && (validation.badNodes.has(e.id) || validation.orphans.has(e.id))
+    const time = e.time + store.offStart
+    const visited = localTau >= time - 1e-6 && localTau <= totalDur()
+    if (isBad) c.classList.add('is-bad')
+    else if (visited) c.classList.add('is-visited')
+    else if (pendingFrom === e.id) {
+      c.classList.add('is-pending')
+      c.style.stroke = selectedPath()?.color ?? '#3c4048'
+    }
+    g.append(hit, c)
+    nodeLayer!.appendChild(g)
+  }
+}
+
+// ── 路径选择悬浮窗 ────────────────────────────────────────────
+let pathPanel: HTMLElement
+function renderPathWindow(): void {
+  if (!pathPanel) return
+  pathPanel.innerHTML = ''
+  const head = document.createElement('div')
+  head.className = 'lk-paths__head'
+  head.textContent = t('l3.paths')
+  const add = document.createElement('button')
+  add.type = 'button'
+  add.className = 'lk-paths__add'
+  add.textContent = '+'
+  add.title = t('l3.addPath')
+  add.addEventListener('click', () => addPath())
+  head.append(add)
+  pathPanel.append(head)
+  if (!store.paths.length) {
+    const empty = document.createElement('div')
+    empty.className = 'lk-paths__empty'
+    empty.textContent = t('l3.noPath')
+    pathPanel.append(empty)
+    return
+  }
+  for (const p of store.paths) {
+    const row = document.createElement('button')
+    row.type = 'button'
+    row.className = `lk-pathrow${p.id === store.selected ? ' is-active' : ''}`
+    const sw = document.createElement('span')
+    sw.className = 'lk-sw'
+    sw.style.background = p.color
+    const name = document.createElement('span')
+    name.className = 'lk-pathrow__name'
+    name.textContent = trackLabel(p.trackKey)
+    const del = document.createElement('span')
+    del.className = 'lk-pathrow__del'
+    del.textContent = '×'
+    del.title = t('l3.delPath')
+    del.addEventListener('click', (ev) => {
+      ev.stopPropagation()
+      if (!confirm(t('l3.delPathConfirm', { name: name.textContent }))) return
+      removePath(p.id)
+    })
+    row.append(sw, name, del)
+    row.addEventListener('click', () => {
+      store.selected = p.id
+      selectedEdge = null
+      pendingFrom = null
+      renderAll()
+    })
+    pathPanel.append(row)
+  }
+}
+function addPath(): void {
+  const p: PathData = {
+    id: `p${++pathSeq}`,
+    color: PALETTE[store.paths.length % PALETTE.length]!,
+    trackKey: `manual:${pathSeq}`,
+    auto: [], manual: [], ayStart: [], ayEnd: [], anchorsManual: true,
+  }
+  store.paths.push(p)
+  store.selected = p.id
+  renderAll()
+}
+function removePath(id: string): void {
+  store.paths = store.paths.filter((p) => p.id !== id)
+  if (store.selected === id) store.selected = store.paths[0]?.id ?? ''
+  renderAll()
+}
+
+// ── 交互：端点连线 / 选边删除 / 锚点拖动 ─────────────────────────
+function clientToUser(clientX: number, clientY: number): { x: number; y: number } {
+  const r = svg!.getBoundingClientRect()
+  const vbW = Number(svg!.dataset.vbW) || r.width
+  const px = r.width / vbW
+  return { x: (clientX - r.left) / px, y: (clientY - r.top) / px }
+}
+
+// ── 视图缩放（滚轮 / 双指捏合；等比，排版在第 2 步已锁定） ──────────
+let svgScale = 1
+function applyScale(): void {
+  if (!svg) return
+  if (vbW) svg.style.width = `${vbW * svgScale}px`
+  if (vbH) svg.style.height = `${vbH * svgScale}px`
+}
+function zoomAt(clientX: number, clientY: number, factor: number): void {
+  if (!svg) return
+  const ns = Math.min(3, Math.max(0.3, svgScale * factor))
+  if (Math.abs(ns - svgScale) < 0.001) return
+  const sr = scoreEl.getBoundingClientRect()
+  const ax = scoreEl.scrollLeft + (clientX - sr.left)
+  const ay = scoreEl.scrollTop + (clientY - sr.top)
+  svgScale = ns
+  applyScale()
+  scoreEl.scrollLeft = ax * factor - (clientX - sr.left)
+  scoreEl.scrollTop = ay * factor - (clientY - sr.top)
+}
+scoreEl.addEventListener(
+  'wheel',
+  (e) => {
+    e.preventDefault()
+    zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015))
+  },
+  { passive: false },
+)
+const pinchPointers = new Map<number, { x: number; y: number }>()
+let pinchDist = 0
+let pinchMid = { x: 0, y: 0 }
+scoreEl.addEventListener('pointerdown', (e) => {
+  pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+  if (pinchPointers.size === 2) {
+    const pts = [...pinchPointers.values()]
+    pinchDist = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y)
+    pinchMid = { x: (pts[0]!.x + pts[1]!.x) / 2, y: (pts[0]!.y + pts[1]!.y) / 2 }
+  }
+})
+scoreEl.addEventListener(
+  'pointermove',
+  (e) => {
+    if (!pinchPointers.has(e.pointerId)) return
+    pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY })
+    if (pinchPointers.size === 2) {
+      const pts = [...pinchPointers.values()]
+      const d = Math.hypot(pts[0]!.x - pts[1]!.x, pts[0]!.y - pts[1]!.y)
+      if (pinchDist > 0) {
+        e.preventDefault()
+        zoomAt(pinchMid.x, pinchMid.y, d / pinchDist)
+      }
+      pinchDist = d
+      pinchMid = { x: (pts[0]!.x + pts[1]!.x) / 2, y: (pts[0]!.y + pts[1]!.y) / 2 }
+    }
+  },
+  { passive: false },
+)
+const endPinch = (e: PointerEvent): void => {
+  pinchPointers.delete(e.pointerId)
+  if (pinchPointers.size < 2) pinchDist = 0
+}
+scoreEl.addEventListener('pointerup', endPinch)
+scoreEl.addEventListener('pointercancel', endPinch)
+
+// 滚动接近已铺小节前沿时提前补挂
+scoreEl.addEventListener(
+  'scroll',
+  () => {
+    if (!measureQueue.length || !svg) return
+    const r = svg.getBoundingClientRect()
+    const px = r.width / vbW
+    const targetUserX = (scoreEl.scrollLeft + scoreEl.clientWidth * 1.5) / px
+    ensureRevealToUserX(targetUserX)
+  },
+  { passive: true },
+)
+
+function onSvgClick(ev: MouseEvent): void {
+  const edgeHit = (ev.target as Element).closest?.('.lk-edge-hit') as SVGPathElement | null
+  if (edgeHit) {
+    const pathId = edgeHit.dataset.pathId!
+    const pair: Pair = [edgeHit.dataset.from!, edgeHit.dataset.to!]
+    selectedEdge = { pathId, pair }
+    pendingFrom = null
+    renderAll()
+    return
+  }
+  const epEl = (ev.target as Element).closest?.('[data-ep]') as Element | null
+  if (!epEl) {
+    pendingFrom = null
+    selectedEdge = null
+    renderAll()
+    return
+  }
+  const id = epEl.getAttribute('data-ep')!
+  const p = selectedPath()
+  if (!p) {
+    hintEl.textContent = t('l3.needPath')
+    return
+  }
+  if (!pendingFrom) {
+    pendingFrom = id
+    renderEdges()
+    renderNodes()
+    hintEl.textContent = t('l3.pickTarget')
+    return
+  }
+  if (pendingFrom === id) {
+    pendingFrom = null
+    renderAll()
+    return
+  }
+  const a = epById.get(pendingFrom)!, b = epById.get(id)!
+  if (Math.abs(a.time - b.time) < 1e-6) {
+    // 同刻硬拦截
+    hintEl.textContent = t('l3.sameTimeBlocked')
+    pendingFrom = null
+    renderAll()
+    return
+  }
+  const from = a.time <= b.time ? pendingFrom : id
+  const to = a.time <= b.time ? id : pendingFrom
+  const pair: Pair = [from, to]
+  const exists = allPairs().some((x) => x.path.id === p.id && pairEq(x.pair[0], x.pair[1], pair[0], pair[1]))
+  if (!exists) p.manual.push(pair)
+  pendingFrom = null
+  renderAll()
+}
+
+// Delete 删除选中边（只删人工边或记录自动边抑制）
+document.addEventListener('keydown', (e) => {
+  const typing = (e.target as HTMLElement)?.tagName === 'INPUT'
+  if (typing || document.querySelector('.sh-modal:not([hidden])')) return
+  if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEdge) {
+    const { pathId, pair } = selectedEdge
+    const p = store.paths.find((x) => x.id === pathId)
+    if (!p) return
+    const mi = p.manual.findIndex((x) => pairEq(x[0], x[1], pair[0], pair[1]))
+    if (mi >= 0) p.manual.splice(mi, 1)
+    else {
+      p.auto = p.auto.filter((x) => !pairEq(x[0], x[1], pair[0], pair[1]))
+      if (!store.removed.some((r) => pairEq(r[0], r[1], pair[0], pair[1]))) store.removed.push(pair)
+    }
+    selectedEdge = null
+    renderAll()
+    return
+  }
+  if (e.key === 'Escape') { pendingFrom = null; selectedEdge = null; renderAll() }
+})
+
+// 鼠标移动：临时连线跟随 + 锚点拖动
+let anchorDrag: { pathId: string; which: 'start' | 'end'; index: number } | null = null
+window.addEventListener('pointermove', (e) => {
+  if (anchorDrag) {
+    const u = clientToUser(e.clientX, e.clientY)
+    const p = store.paths.find((x) => x.id === anchorDrag!.pathId)
+    if (p) {
+      const arr = anchorDrag.which === 'start' ? p.ayStart : p.ayEnd
+      if (anchorDrag.index in arr) arr[anchorDrag.index] = u.y
+      renderTerms()
+      renderEdges()
+    }
+    return
+  }
+  if (pendingFrom) {
+    mouseUser = clientToUser(e.clientX, e.clientY)
+    renderEdges()
+    renderNodes()
+  }
+})
+window.addEventListener('pointerup', () => {
+  if (anchorDrag) { anchorDrag = null; renderAll() }
+})
+function onSvgPointerDown(e: PointerEvent): void {
+  const a = (e.target as Element).closest?.('.lk-anchor') as SVGCircleElement | null
+  if (!a || !selectedPath() || selectedPath()!.id !== a.dataset.pathId) return
+  const p = selectedPath()!
+  p.anchorsManual = true // 用户一拖动即接管锚点（自动中位数不再覆盖）
+  anchorDrag = {
+    pathId: a.dataset.pathId!,
+    which: a.dataset.which as 'start' | 'end',
+    index: Number(a.dataset.index ?? 0),
+  }
+  e.preventDefault()
+}
+// 在竖线上点击给当前路径补默认打点（点空白处而非已有圆点）
+function onSvgDblClick(e: MouseEvent): void {
+  const p = selectedPath()
+  if (!p) return
+  const u = clientToUser(e.clientX, e.clientY)
+  p.anchorsManual = true
+  if (Math.abs(u.x - startX) < 20) { p.ayStart.push(u.y); renderAll() }
+  else if (Math.abs(u.x - endX) < 20) { p.ayEnd.push(u.y); renderAll() }
+}
+
+// ── 播放：圆点沿路径匀速走，音频在留白后进入 ─────────────────────
+let player: MideePlayer | null = null
+let localTau = 0
+let isPlaying = false
+let rafId = 0
+function totalDur(): number {
+  return store.offStart + Math.max(0, musicDur) + store.offEnd
+}
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v))
+}
+
+interface BallPos { x: number; y: number; color: string }
+/**
+ * 当前时刻每条路径上圆点的用户坐标（用于绘制 + 视野跟随 + 流式追赶）。
+ *
+ * 模型：**圆点严格沿连线（边）运动**——每条边对应一个圆点，在其两端点
+ * [A.time, B.time] 之间做匀速插值；到达 B 的时刻恰好是 B 音符的演奏时刻。
+ * 这样：
+ *   ① 同轨：自动连线绝不跨轨，圆点天然不串轨；
+ *   ② 到达时间严格 = MIDI time；
+ *   ③ 严格沿连线走，不出轨（位置就是两端点的直线插值）。
+ * 分叉/合并：多条边各自一个点——同刻和弦并行出发、琶音错峰则依次到达，
+ * 汇入同一端点时多球自然重合（不能再用“时间桶 + pos 数组下标”配对，否则
+ * 和弦→琶音时三个点会被错误地全塞到最先响的那个音）。
+ * 首/尾留白：无入边的头端点从起点线飞入、无出边的尾端点飞向终点线。
+ */
+function ballPositionsAt(tau: number): BallPos[] {
+  const out: BallPos[] = []
+  const os = store.offStart
+  const tot = totalDur()
+  const lerp = (x0: number, y0: number, x1: number, y1: number, u: number, color: string): BallPos =>
+    ({ x: x0 + (x1 - x0) * u, y: y0 + (y1 - y0) * u, color })
+  for (const p of store.paths) {
+    const segs: { A: Endpoint; B: Endpoint }[] = []
+    const nodes = new Set<string>()
+    const indeg = new Set<string>()
+    const outdeg = new Set<string>()
+    for (const { pair } of pathEdges(p)) {
+      const A = epById.get(pair[0])
+      const B = epById.get(pair[1])
+      if (!A || !B) continue // 小节尚未挂载
+      segs.push({ A, B })
+      nodes.add(A.id); nodes.add(B.id); indeg.add(B.id); outdeg.add(A.id)
+    }
+    // ① 首留白：无入边的头端点，从起点线匀速飞入，到达时刻 = 该音时间
+    for (const id of nodes) {
+      if (indeg.has(id)) continue
+      const E = epById.get(id)!
+      const te = E.time + os
+      if (tau >= -1e-6 && tau <= te + 1e-6) {
+        const y0 = p.ayStart.length ? nearestAnchor(p.ayStart, E.y) : E.y
+        const u = clamp(tau / Math.max(1e-6, te), 0, 1)
+        out.push(lerp(startX, y0, E.x, E.y, u, p.color))
+      }
+    }
+    // ② 真实连线：每条边一个圆点，严格沿线、到达时刻 = B.time
+    for (const { A, B } of segs) {
+      const ta = A.time + os
+      const tb = B.time + os
+      if (tau >= ta - 1e-6 && tau <= tb + 1e-6) {
+        const u = clamp((tau - ta) / Math.max(1e-6, tb - ta), 0, 1)
+        out.push(lerp(A.x, A.y, B.x, B.y, u, p.color))
+      }
+    }
+    // ③ 尾留白：无出边的尾端点，从末音匀速飞向终点线
+    for (const id of nodes) {
+      if (outdeg.has(id)) continue
+      const E = epById.get(id)!
+      const te = E.time + os
+      if (tau >= te - 1e-6 && tau <= tot + 1e-6) {
+        const y1 = p.ayEnd.length ? nearestAnchor(p.ayEnd, E.y) : E.y
+        const u = clamp((tau - te) / Math.max(1e-6, tot - te), 0, 1)
+        out.push(lerp(E.x, E.y, endX, y1, u, p.color))
+      }
+    }
+  }
+  return out
+}
+
+function renderBalls(tau: number): BallPos[] {
+  if (!ballLayer) return []
+  ballLayer.innerHTML = ''
+  const pos = ballPositionsAt(tau)
+  for (const bp of pos) {
+    const c = document.createElementNS(SVG_NS, 'circle')
+    c.setAttribute('class', 'lk-ball')
+    c.setAttribute('cx', bp.x.toFixed(1))
+    c.setAttribute('cy', bp.y.toFixed(1))
+    c.setAttribute('r', '8')
+    c.setAttribute('fill', bp.color)
+    c.setAttribute('stroke', '#fff')
+    c.setAttribute('stroke-width', '2')
+    ballLayer.appendChild(c)
+  }
+  return pos
+}
+
+/** 播放时把所有圆点保持在视野内（横向推进为主，纵向兼顾高低谱表） */
+function followBalls(pos: BallPos[]): void {
+  if (!svg || !pos.length) return
+  const r = svg.getBoundingClientRect()
+  const sr = scoreEl.getBoundingClientRect()
+  const px = r.width / vbW
+  const py = r.height / vbH
+  // 用户坐标 → 相对滚动内容原点的像素
+  const toContentX = (ux: number): number => r.left - sr.left + scoreEl.scrollLeft + ux * px
+  const toContentY = (uy: number): number => r.top - sr.top + scoreEl.scrollTop + uy * py
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  for (const b of pos) {
+    minX = Math.min(minX, toContentX(b.x)); maxX = Math.max(maxX, toContentX(b.x))
+    minY = Math.min(minY, toContentY(b.y)); maxY = Math.max(maxY, toContentY(b.y))
+  }
+  const vw = scoreEl.clientWidth
+  const vh = scoreEl.clientHeight
+  const leadX = maxX
+  const viewL = scoreEl.scrollLeft, viewR = viewL + vw
+  if (leadX > viewR - vw * 0.28) scoreEl.scrollLeft = leadX - vw * 0.42
+  else if (minX < viewL + vw * 0.12) scoreEl.scrollLeft = Math.max(0, minX - vw * 0.2)
+  const midY = (minY + maxY) / 2
+  const viewT = scoreEl.scrollTop, viewB = viewT + vh
+  if (midY > viewB - vh * 0.3) scoreEl.scrollTop = midY - vh * 0.5
+  else if (midY < viewT + vh * 0.3) scoreEl.scrollTop = Math.max(0, midY - vh * 0.5)
+}
+
+async function ensurePlayer(): Promise<MideePlayer | null> {
+  if (player) return player
+  const b64 = playbackMidiB64()
+  if (!b64) return null
+  const p = new MideePlayer({ onProgress: () => undefined, onEnd: onPlayEnd, onState: () => undefined })
+  const bin = atob(b64)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  await p.load(bytes, sessionStorage.getItem('midee.name') ?? undefined)
+  player = p
+  bar?.attachPlayer()
+  return p
+}
+function audioWindow(tau: number): [number, number] {
+  return [store.offStart, store.offStart + musicDur]
+}
+async function syncAudio(tau: number, prevTau: number): Promise<void> {
+  const p = player
+  if (!p) return
+  const [a0, a1] = audioWindow(tau)
+  const inside = tau >= a0 && tau <= a1
+  const wasInside = prevTau >= a0 && prevTau <= a1
+  if (inside) {
+    const at = clamp(tau - a0, 0, musicDur)
+    if (!wasInside) await p.play(at)
+    else if (!p.playing && isPlaying) p.play(at).catch(() => undefined)
+  } else if (p.playing) {
+    p.pause()
+  }
+}
+function onPlayEnd(): void {
+  // 音频自然结束（在尾留白开始处）；圆点继续走完尾留白后由 rAF 收尾
+}
+
+async function togglePlay(): Promise<void> {
+  const p = await ensurePlayer()
+  if (!p) { hintEl.textContent = t('l3.noMidi'); return }
+  if (isPlaying) {
+    isPlaying = false
+    p.pause()
+  } else {
+    if (localTau >= totalDur() - 1e-6) {
+      localTau = 0
+      scoreEl.scrollLeft = 0 // 从头放：视野回到起点线
+    }
+    isPlaying = true
+    await syncAudio(localTau, -1)
+  }
+  bar?.setPlaying(isPlaying)
+}
+
+/** 跳到完整时间线（含首尾偏移）上的某一刻：同步音频位置、补挂小节、刷新并跟随视野 */
+function locateTimeline(tau: number): void {
+  localTau = clamp(tau, 0, totalDur())
+  // 音频整体后移 offStart：留白段把播放器停在 0 / 末尾，音乐段 seek 到 tau-offStart
+  if (player) {
+    const at = localTau < store.offStart ? 0
+      : localTau > store.offStart + musicDur ? musicDur
+      : localTau - store.offStart
+    player.seek(at)
+  }
+  const pos = ballPositionsAt(localTau)
+  if (measureQueue.length) {
+    const r = svg!.getBoundingClientRect()
+    const targetX = (Math.max(0, ...pos.map((b) => b.x)) + scoreEl.clientWidth * 0.5) / (r.width / vbW)
+    ensureRevealToUserX(targetX)
+  }
+  renderNodes()
+  followBalls(renderBalls(localTau))
+  bar?.setProgress(localTau, totalDur())
+}
+/** 进度条 0..1 → 完整时间线定位 */
+function seekFrac(frac: number): void {
+  locateTimeline(clamp(frac, 0, 1) * totalDur())
+}
+/** ±10s（以及播放条进退按钮）：在完整时间线上移动 */
+function nudge(deltaSec: number): void {
+  locateTimeline(localTau + deltaSec)
+}
+function frame(): void {
+  rafId = requestAnimationFrame(frame)
+  if (!isPlaying) return
+  // 单播放头：localTau 不再自行积分——由播放头（p.currentTime = playbackEngine.now()，
+  // 含变速）平移映射到完整时间线（0..offStart..musicDur..totalDur）；
+  // 与第五页同一 MusicTime 轴（0..dur），首尾留白只是本页的显示偏移。
+  const prev = localTau
+  const mt = player ? player.currentTime : 0
+  localTau = Math.min(totalDur(), store.offStart + mt)
+  if (localTau >= totalDur() - 1e-6) {
+    localTau = totalDur()
+    isPlaying = false
+    player?.pause()
+    bar?.setPlaying(false)
+    bar?.setEnded(totalDur())
+  } else {
+    void syncAudio(localTau, prev)
+  }
+  // 播放条映射完整时间线（起点线 0:00 → 终点线总时长，含首尾留白）
+  bar?.setProgress(localTau, totalDur())
+  // 连线是静态的路径色细线，播放时只需刷新端点（绿）与圆点
+  renderNodes()
+  const pos = renderBalls(localTau)
+  // 小球前方小节先铺开，再把视野带到小球
+  if (measureQueue.length) {
+    const r = svg!.getBoundingClientRect()
+    const aheadUser = (Math.max(0, ...pos.map((b) => b.x)) + scoreEl.clientWidth * 1.2) / (r.width / vbW)
+    ensureRevealToUserX(aheadUser)
+  }
+  followBalls(pos)
+}
+rafId = requestAnimationFrame(frame)
+
+// ── 顶栏分组面板 ──────────────────────────────────────────────
+function policyPanel(): HTMLElement {
+  const box = document.createElement('div')
+  box.className = 'sh-dd-scroll sh-panel-sliders'
+  const scopeSel = document.createElement('select')
+  scopeSel.className = 'sh-select lk-sel'
+  ;([
+    ['voice', t('l3.scope.voice')],
+    ['voiceStable', t('l3.scope.voiceStable')],
+    ['staff', t('l3.scope.staff')],
+  ] as [AutoScope, string][]).forEach(([v, label]) => {
+    const o = document.createElement('option')
+    o.value = v; o.textContent = label
+    if (store.policy.scope === v) o.selected = true
+    scopeSel.append(o)
+  })
+  const succSel = document.createElement('select')
+  succSel.className = 'sh-select lk-sel'
+  ;([
+    ['onset', t('l3.succ.onset')],
+    ['release', t('l3.succ.release')],
+  ] as [AutoSucc, string][]).forEach(([v, label]) => {
+    const o = document.createElement('option')
+    o.value = v; o.textContent = label
+    if (store.policy.succ === v) o.selected = true
+    succSel.append(o)
+  })
+  const mkRow = (label: string, sel: HTMLSelectElement): HTMLElement => {
+    const lab = document.createElement('label')
+    lab.className = 'lk-polrow'
+    const k = document.createElement('span')
+    k.textContent = label
+    lab.append(k, sel)
+    return lab
+  }
+  box.append(mkRow(t('l3.scope'), scopeSel), mkRow(t('l3.succ'), succSel))
+  const apply = (): void => {
+    store.policy = { scope: scopeSel.value as AutoScope, succ: succSel.value as AutoSucc }
+    const name = sessionStorage.getItem('midee.name') ?? 'untitled'
+    saveAutoPolicy(name, store.policy)
+    rebuildAutoKeepManual()
+    selectedEdge = null
+    renderAll()
+  }
+  scopeSel.addEventListener('change', apply)
+  succSel.addEventListener('change', apply)
+  const rerun = document.createElement('button')
+  rerun.type = 'button'
+  rerun.className = 'sh-dd-item'
+  rerun.textContent = t('l3.rerunAuto')
+  rerun.addEventListener('click', () => {
+    store.removed = []
+    apply()
+  })
+  box.append(rerun)
+  return box
+}
+
+function editPanel(): HTMLElement {
+  const box = document.createElement('div')
+  const mk = (label: string, fn: () => void): void => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'sh-dd-item'
+    b.textContent = label
+    b.addEventListener('click', fn)
+    box.append(b)
+  }
+  mk(t('l3.clearPathEdges'), () => {
+    const p = selectedPath()
+    if (!p) return
+    p.manual = []
+    for (const e of p.auto) if (!store.removed.some((r) => pairEq(r[0], r[1], e[0], e[1]))) store.removed.push(e)
+    p.anchorsManual = true
+    p.ayStart = []; p.ayEnd = []
+    renderAll()
+  })
+  mk(t('l3.restoreAuto'), () => {
+    const p = selectedPath()
+    if (!p) return
+    p.manual = []
+    // 解除归属该路径轨道的全部自动边的人工删除抑制
+    store.removed = store.removed.filter((r) => {
+      const h = heads.find((x) => x.noteId === r[0])
+      return !h || trackKeyOf(h) !== p.trackKey
+    })
+    p.anchorsManual = false
+    rebuildAutoKeepManual()
+    renderAll()
+  })
+  mk(t('l3.delSelectedPath'), () => {
+    if (selectedPath()) removePath(selectedPath()!.id)
+  })
+  return box
+}
+
+function playbackPanel(): HTMLElement {
+  const box = document.createElement('div')
+  box.className = 'sh-dd-scroll sh-panel-sliders'
+  const mk = (label: string, key: 'offStart' | 'offEnd'): HTMLElement => {
+    const lab = document.createElement('label')
+    lab.className = 'lk-polrow'
+    const k = document.createElement('span')
+    k.textContent = label
+    const inp = document.createElement('input')
+    inp.type = 'number'
+    inp.className = 'sh-select lk-num'
+    inp.min = '0'; inp.max = '5'; inp.step = '0.1'
+    inp.value = String(store[key])
+    inp.addEventListener('input', () => {
+      const v = Number(inp.value)
+      if (Number.isFinite(v) && v >= 0 && v <= 5) {
+        store[key] = v
+        persist() // 首尾留白落盘：第五页显示轴/球头尾弧从这里读（两页偏移同源）
+        localTau = clamp(localTau, 0, totalDur())
+        renderAll()
+        bar?.setProgress(localTau, totalDur()) // 总时长（含留白）变化后同步播放条
+      }
+    })
+    lab.append(k, inp)
+    return lab
+  }
+  box.append(mk(t('l3.offStart'), 'offStart'), mk(t('l3.offEnd'), 'offEnd'))
+  return box
+}
+
+// ── 启动 ──────────────────────────────────────────────────────
+function goNext(): void {
+  const probs = finalCheck()
+  if (probs.length) {
+    hintEl.textContent = `${t('l3.hasProblems')}：${probs.slice(0, 3).join('；')}${probs.length > 3 ? ' …' : ''}`
+    hintEl.style.color = 'var(--sh-danger)'
+    return
+  }
+  hintEl.style.color = ''
+  goStep(4)
+}
+
+async function boot(): Promise<void> {
+  const xml = sessionStorage.getItem('midee.xml')
+  if (!xml) {
+    emptyEl.style.display = 'block'
+    document.getElementById('score')!.style.display = 'none'
+    mountShell({ step: 3 })
+    return
+  }
+  store = loadStore()
+  pathSeq = store.paths.reduce((m, p) => Math.max(m, Number(p.id.replace('p', '')) || 0), 0)
+  shell = mountShell({
+    step: 3,
+    title: sessionStorage.getItem('midee.name') ?? '未命名',
+    tools: [],
+    next: { onNext: goNext },
+  })
+  const buildTools = (): { id: string; label: string; node: HTMLElement }[] => [
+    { id: 'policy', label: t('l3.autoTitle'), node: policyPanel() },
+    { id: 'edit', label: t('l3.editTitle'), node: editPanel() },
+    { id: 'playoff', label: t('l3.playoffTitle'), node: playbackPanel() },
+  ]
+  shell.setTools(buildTools())
+  onLocaleChange(() => shell.setTools(buildTools()))
+
+  pathPanel = document.createElement('div')
+  pathPanel.className = 'lk-paths'
+  document.body.appendChild(pathPanel)
+
+  bar = createPlayerBar({
+    storageKey: 'midee.float.link2d',
+    getPlayer: () => player,
+    togglePlay: () => void togglePlay(),
+    seekFrac,
+    nudge,
+  })
+  bar.setProgress(0, store.offStart + musicDur + store.offEnd)
+
+  applyI18n(document.body)
+  hintEl.textContent = t('l3.hint')
+
+  const ok = await prepareToolkit(xml)
+  if (!ok) return
+  ensurePathFonts() // 字体预取与后续构建并行（挂载前转换 text→path 需要它就绪）
+  // 时间/轨道（含原始 MIDI 轨匹配）与自动图必须在流式挂载前就绪
+  buildTimeAndTracks(xml)
+  runAuto(store.policy)
+  if (!store.paths.length) buildDefaultPathsFromAuto()
+  await mountSvgProgressive() // 小节逐帧铺开，每批触发 scanMountedEndpoints + renderAll
+  bar?.setProgress(localTau, totalDur()) // 音乐时长就绪后刷新播放条总时长
+  svg!.addEventListener('click', onSvgClick)
+  svg!.addEventListener('pointerdown', onSvgPointerDown)
+  svg!.addEventListener('dblclick', onSvgDblClick)
+  if (sessionStorage.getItem('midee.midi')) void ensurePlayer()
+}
+void boot()

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>2D 谱面 · 人工连线工作台</title>
+  <style>
+    #wrap { display:flex; flex-direction:column; height:100vh; }
+    body { margin:0; font:12px/1.5 system-ui, sans-serif; background:#0e1216; color:#e8edf2; }
+    #top { display:flex; gap:8px; padding:6px 10px; background:#171d23; border-bottom:1px solid #2a323a; align-items:center; flex-wrap:wrap; }
+    #top h1 { font-size:13px; }
+    #top button, #top select, #top label.btn { padding:3px 8px; font-size:12px; cursor:pointer; background:#222a32; color:#e8edf2; border:1px solid #2a323a; border-radius:4px; }
+    #top a { font-size:12px; color:#4da3ff; text-decoration:none; border:1px solid #2a323a; padding:2px 7px; border-radius:4px; }
+    .sep { width:1px; height:18px; background:#2a323a; }
+    .spacer { flex:1; }
+    #stats, #manualCount { color:#8a94a0; }
+    #main { display:flex; flex:1; min-height:0; }
+    #svgPane { flex:1; min-width:0; overflow:auto; background:#fff; padding:6px; position:relative; }
+    #svgPane .lbl { position:sticky; top:0; left:0; background:rgba(255,255,255,.95); color:#333; font-size:11px; padding:2px 5px; z-index:6; }
+    #svgRef { display:block; }
+    #svgRef svg { background:#fff; display:block; }
+    #canvasPane { display:none; width:200px; border-left:1px solid #2a323a; position:relative; background:#fff; }
+    #canvasPane canvas { width:100%; height:100%; display:block; }
+    #dbg { position:absolute; right:6px; top:6px; width:300px; max-height:60%; overflow:auto; background:rgba(16,20,24,.95); border:1px solid #2a323a; border-radius:6px; font:11px monospace; color:#8a94a0; z-index:10; }
+    #dbg .dhead { padding:3px 7px; color:#e8edf2; font-weight:600; }
+    #dbg .dbody { overflow:auto; }
+    #dbg .drow { padding:1px 7px; white-space:pre; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="top">
+      <h1>2D 谱面 · 人工连线工作台</h1>
+      <a href="./symbols.html">→ 符号对照页</a>
+      <a href="./index.html">→ 原测试页</a>
+      <span class="sep"></span>
+      <select id="fitMode" title="适应方式">
+        <option value="width" selected>适应宽度（整谱可见）</option>
+        <option value="page">整页塞入</option>
+        <option value="height">适应高度（横向滚动）</option>
+      </select>
+      <button id="fitWidth">宽度</button>
+      <button id="fitPage">整页</button>
+      <button id="fitHeight">高度</button>
+      <span class="sep"></span>
+      <select id="corrView" title="连线过滤">
+        <option value="all" selected>全部连线</option>
+        <option value="manual">只看人工</option>
+        <option value="auto">只看自动</option>
+      </select>
+      <button id="clearAuto" title="清空所有自动连线，谱面留白，全部由我手连">清空自动（我来连）</button>
+      <button id="restoreAuto" title="恢复自动连线">恢复自动</button>
+      <button id="manualClear">清除人工</button>
+      <button id="manualExport">导出</button>
+      <label class="btn">导入<input id="manualImport" type="file" accept="application/json,.json" style="display:none" /></label>
+      <span id="manualCount">人工 0 · 删除 0</span>
+      <span class="sep"></span>
+      <button id="toggle3d">显示 3D</button>
+      <button id="reload">重建</button>
+      <span class="spacer"></span>
+      <span id="stats"></span>
+      <span id="legacy" style="display:none">
+        <button id="flipbtn">翻</button>
+        <select id="view"><option value="ortho" selected>ortho</option><option value="persp">persp</option></select>
+        <span id="mkToggles"></span>
+        <input id="timeBar" type="range" min="0" max="1000" value="0" />
+        <span id="timeVal">0.00s</span>
+        <button id="playBtn">播放</button>
+      </span>
+    </div>
+    <div id="main">
+      <div id="svgPane">
+        <div class="lbl">点线=选中(变黄) · 拖端点=黄虚线新建 · Delete=删线 · Esc=取消 · 滚轮=缩放</div>
+        <div id="svgRef"></div>
+      </div>
+      <div id="canvasPane">
+        <canvas id="gl"></canvas>
+        <pre id="dbg"><div class="dhead">元素映射</div><div class="dbody"></div></pre>
+      </div>
+    </div>
+  </div>
+  <script>window.__SCORE_XML = 'symbols.xml'</script>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>

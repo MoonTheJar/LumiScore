@@ -1,0 +1,19 @@
+Toy controls visibility: {
+  "controls": {
+    "display": "none",
+    "visibility": "visible",
+    "opacity": "1",
+    "w": 0,
+    "h": 0,
+    "top": 0
+  },
+  "diag": {
+    "display": "none",
+    "visibility": "visible",
+    "opacity": "0.85",
+    "w": 0,
+    "h": 0,
+    "top": 0
+  }
+}
+done

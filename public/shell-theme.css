@@ -1,0 +1,125 @@
+/* ── 首屏令牌副本（boot-time tokens）──────────────────────────
+   真源是 src/shell/shell.css 顶部那段。这里只复制「第一帧就要用」的部分，
+   由 <link> 在各流程页 head 里最先加载（体积很小，阻塞也无所谓）。
+
+   为什么要有这份文件：外壳样式原本只由 JS 注入（shell.ts 里 import './shell.css'），
+   而 ESM 必须先把整张依赖图下载并求值完才执行第一行代码——在那之前
+   `color: var(--sh-text)`、`padding-top: calc(var(--sh-topbar-h) + 44px)` 全是无效值，
+   首屏就出现「白底黑字、框和间距都塌成 0、随后才一下跳出来」的回退闪。
+
+   所有规则都挂在 html[data-boot='1'] 上：head 里的内联脚本先打上这个标记，
+   mountShell() 跑完再由 shell.ts 摘掉。真 CSS 一到、标记一撤，这份副本就彻底退出层叠，
+   所以不依赖 <link> 的先后顺序，将来某天没跟上改动也只影响第一帧，不会改到成品外观。 */
+
+:root[data-boot='1'] {
+  --sh-bg: #f4f6f9;
+  --sh-surface: #ffffff;
+  --sh-surface-2: #f7f8fa;
+  --sh-surface-3: #eef1f5;
+  --sh-border: #e5e8ee;
+  --sh-border-strong: #d3d8e2;
+  --sh-text: #141922;
+  --sh-muted: #69727f;
+  --sh-faint: #9aa2ad;
+  --sh-accent: #2f6bff;
+  --sh-accent-soft: #eaf0ff;
+  --sh-accent-text: #ffffff;
+  --sh-danger: #d63c3c;
+  --sh-ok: #17a35c;
+  --sh-shadow-1: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --sh-shadow-2: 0 2px 8px rgba(16, 24, 40, 0.08), 0 12px 32px rgba(16, 24, 40, 0.1);
+  --sh-r-sm: 8px;
+  --sh-r: 12px;
+  --sh-r-lg: 16px;
+  --sh-r-pill: 999px;
+  --sh-topbar-h: 54px;
+  --sh-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --sh-dur: 0.18s;
+}
+
+:root[data-boot='1'][data-theme='dark'] {
+  --sh-bg: #0b0d13;
+  --sh-surface: #14181f;
+  --sh-surface-2: #191e27;
+  --sh-surface-3: #212734;
+  --sh-border: #262c38;
+  --sh-border-strong: #333a49;
+  --sh-text: #e6e9f0;
+  --sh-muted: #98a1b0;
+  --sh-faint: #6f7887;
+  --sh-accent: #7aa2ff;
+  --sh-accent-soft: #1b2740;
+  --sh-accent-text: #0b0d13;
+  --sh-danger: #ff7a7a;
+  --sh-ok: #4ad295;
+  --sh-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sh-shadow-2: 0 2px 8px rgba(0, 0, 0, 0.45), 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+:root[data-boot='1'] body {
+  background: var(--sh-bg);
+  color: var(--sh-text);
+  font-family:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 兜底横幅：内联脚本创建的节点，样式也放这儿（首屏没有别的 CSS 可用） */
+.lumi-bootfail {
+  position: fixed;
+  left: 50%;
+  top: 44%;
+  transform: translate(-50%, -50%);
+  z-index: 9999;
+  max-width: min(460px, 86vw);
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: #1b2740;
+  color: #eef2f8;
+  font: 14px/1.6 system-ui, sans-serif;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+.lumi-bootfail button {
+  display: block;
+  margin: 12px 0 0;
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #4d7cff;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+/* 装配中断横幅：外壳已经挂上、本页脚本却没跑完。错误原文要能看清，两个出口并排 */
+.lumi-bootfail--asm {
+  border-left: 4px solid #ffb020;
+}
+.lumi-bootfail__err {
+  margin-top: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 176, 32, 0.14);
+  color: #ffd88a;
+  font: 12px/1.5 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  word-break: break-all;
+}
+.lumi-bootfail--asm button {
+  display: inline-block;
+  margin: 12px 10px 0 0;
+}
+.lumi-bootfail--asm .lumi-bootfail__x {
+  background: #3a4763;
+}
