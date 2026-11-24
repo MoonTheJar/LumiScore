@@ -72,6 +72,9 @@ shell-test/
 # root-level stray vector dumps
 /*.svg
 
-# backup files anywhere
+# backup files anywhere (including dated suffixes like .bak_20261031, .backup_before_fix)
 *.bak
+*.bak_*
 *.backup
+*.backup_*
+*.old
