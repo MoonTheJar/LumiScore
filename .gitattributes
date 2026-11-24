@@ -1,0 +1,35 @@
+# 统一文本文件行尾为 LF：仓库存储与工作区检出均为 LF，
+# 消除 "LF will be replaced by CRLF" 警告，保证跨平台（Windows/macOS/Linux）一致。
+* text=auto eol=lf
+
+# 需要在 Windows 原生执行的脚本保留 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制文件：不做任何行尾转换，避免损坏
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.bmp binary
+*.svg binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.mid binary
+*.midi binary
+*.mp3 binary
+*.wav binary
+*.ogg binary
+*.m4a binary
+*.flac binary
+*.han binary
+*.zip binary
+*.gz binary
+*.7z binary
+*.pdf binary
