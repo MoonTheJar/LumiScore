@@ -10,6 +10,7 @@ export interface GlowOptions {
 	color: string;
 	size: number;
 	power: number;
+	intensity: number;
 }
 
 export const defaultGlowOptions: GlowOptions = {
@@ -18,12 +19,14 @@ export const defaultGlowOptions: GlowOptions = {
 	color: "gold",
 	size: 2,
 	power: 1,
+	intensity: 1,
 };
 
 function createGlowMaterial(
 	coefficient: number,
 	color: string,
 	power: number,
+	intensity: number,
 ): THREE.ShaderMaterial {
 	return new THREE.ShaderMaterial({
 		depthWrite: false,
@@ -32,6 +35,7 @@ function createGlowMaterial(
 			coefficient: { value: coefficient },
 			color: { value: new THREE.Color(color) },
 			power: { value: power },
+			uIntensity: { value: intensity },
 		},
 		vertexShader: /* glsl */ `
     varying vec3 vVertexNormal;
@@ -46,6 +50,7 @@ function createGlowMaterial(
     uniform vec3 color;
     uniform float coefficient;
     uniform float power;
+    uniform float uIntensity;
     varying vec3 vVertexNormal;
     varying vec3 vVertexWorldPosition;
     void main() {
@@ -56,7 +61,7 @@ function createGlowMaterial(
         coefficient + dot(vVertexNormal, viewCameraToVertex),
         power
       );
-      gl_FragColor = vec4(color, intensity);
+      gl_FragColor = vec4(color, intensity * uIntensity);
     }
   `,
 	});
@@ -100,7 +105,7 @@ export function createGlowMesh(
 	options?: Partial<GlowOptions>,
 ): THREE.Mesh {
 	const o = { ...defaultGlowOptions, ...options };
-	const mat = createGlowMaterial(o.coefficient, o.color, o.power);
+	const mat = createGlowMaterial(o.coefficient, o.color, o.power, o.intensity);
 	if (o.backside) mat.side = THREE.BackSide;
 	const geo = inflateGeometry(geometry, o.size);
 	return new THREE.Mesh(geo, mat);

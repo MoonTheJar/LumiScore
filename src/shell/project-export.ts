@@ -20,6 +20,10 @@ export interface ProjectExportSelection {
   includeConfig: boolean
   /** 本机偏好 + 3D 场景设置（project.json prefs/surf + README 偏好摘要） */
   includePrefs: boolean
+  /** 第五页「工具 ▾ → 相机」状态（project.json cam：模式/视角/居中参数） */
+  includeCam: boolean
+  /** 第五页「工具 ▾ → 时间」设置（project.json time：首尾留白/音画对齐） */
+  includeTime: boolean
   /** 已下载资源清单（README 重下链接 + project.json resources） */
   includeResources: boolean
 }
@@ -246,7 +250,8 @@ ${resLines.length ? `## 已下载资源（可一键重下）\n\n${resLines.join(
 
 - 在星跃谱「导入」页直接拖入本 \`.zip\`，即可还原乐谱、各页数据与设置，并跳回导出时所在步骤。
 - \`config/\` 下的 md 按 \`1-import\` → \`5-preview\` 累积排列，第 N 页文件包含第 1..N 页的全部信息。
-- 3D 场景设置（球体/拖尾/光照/发光/起终点线/辅助线）随 \`project.json\` 的 \`surf\` 字段保存与还原。
+- 3D 场景设置（球体/拖尾/光照/发光/起终点线/辅助线，含逐路径调参）随 \`project.json\` 的 \`surf\` 字段保存与还原。
+- 相机状态（模式/视角/居中参数）与时间设置（首尾留白/音画对齐）分别随 \`cam\` / \`time\` 字段保存与还原。
 - 资源（音色/贴图）不打包进 zip，按上表链接重下即可。
 `
 }
@@ -266,6 +271,8 @@ export function buildProjectZip(step: number, sel: ProjectExportSelection): Uint
     includeOrigMidi: sel.includeOrigMidi && !!orig,
     includeConfig: sel.includeConfig,
     includePrefs: sel.includePrefs,
+    includeCam: sel.includeCam,
+    includeTime: sel.includeTime,
     includeResources: sel.includeResources,
   }
 
@@ -277,6 +284,8 @@ export function buildProjectZip(step: number, sel: ProjectExportSelection): Uint
   const state = collectProjectState(step, {
     prefs: eff.includePrefs,
     resources: eff.includeResources,
+    cam: eff.includeCam,
+    time: eff.includeTime,
   })
   files[PROJECT_FILE] = strToU8(JSON.stringify(state, null, 2))
 
@@ -329,6 +338,8 @@ export function openProjectExportDialog(step: number): void {
     includeXml: true,
     includeConfig: true,
     includePrefs: true,
+    includeCam: true,
+    includeTime: true,
     includeResources: true,
   }
 
@@ -404,6 +415,8 @@ export function openProjectExportDialog(step: number): void {
       { key: 'includeOrigMidi', labelKey: 'ex.inc.origMidi', supported: !!read('midee.midiOrig') },
       { key: 'includeConfig', labelKey: 'ex.inc.config', supported: true },
       { key: 'includePrefs', labelKey: 'ex.inc.prefs', supported: true },
+      { key: 'includeCam', labelKey: 'ex.inc.cam', supported: true },
+      { key: 'includeTime', labelKey: 'ex.inc.time', supported: true },
       { key: 'includeResources', labelKey: 'ex.inc.resources', supported: true },
     ]
     for (const it of items) {

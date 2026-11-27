@@ -78,3 +78,12 @@ shell-test/
 *.backup
 *.backup_*
 *.old
+
+# dev artifacts under scripts/ — never part of the shipped app
+scripts/*-out.txt
+scripts/*.txt
+scripts/*.png
+scripts/official-html*.html
+scripts/official-shell-auth.html
+scripts/prev9-index.html
+scripts/preview-idx.html

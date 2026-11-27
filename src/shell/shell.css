@@ -3228,3 +3228,86 @@ body.dark2d .sh-srail__thumb { background: rgba(240, 242, 245, 0.5); }
     transform: scale(0.94);
   }
 }
+
+/* ── 0.1.6：GitHub 开源入口 ──────────────────────────────────── */
+/* 设置下拉里含两个控件的行（左文字按钮 + 右圆形图标） */
+.sh-dd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: var(--sh-r-sm);
+}
+.sh-dd-row:hover { background: var(--sh-surface-2); }
+.sh-dd-row__label {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sh-text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 圆形 GitHub 图标（设置行右侧，可复用） */
+.sh-gh-circle {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sh-muted);
+  border: 1px solid var(--sh-border);
+  background: var(--sh-surface-2);
+  text-decoration: none;
+  transition: color 0.15s, border-color 0.15s, transform 0.15s, background 0.15s;
+}
+.sh-gh-circle:hover {
+  color: var(--sh-text);
+  border-color: var(--sh-accent);
+  background: var(--sh-accent-soft);
+  transform: translateY(-1px);
+}
+.sh-gh-circle svg { display: block; }
+/* 关于弹窗里的 GitHub 入口卡片 */
+.sh-about-gh { margin: 14px 0 4px; }
+.sh-about-gh__link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--sh-border);
+  border-radius: var(--sh-r-sm);
+  background: var(--sh-surface-2);
+  color: var(--sh-text);
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s;
+}
+.sh-about-gh__link:hover {
+  border-color: var(--sh-accent);
+  background: var(--sh-accent-soft);
+  transform: translateY(-1px);
+}
+.sh-about-gh__icon {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sh-surface);
+  border: 1px solid var(--sh-border);
+  color: var(--sh-text);
+}
+.sh-about-gh__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sh-about-gh__text strong { font-size: 13.5px; font-weight: 600; }
+.sh-about-gh__text em { font-style: normal; font-size: 12px; color: var(--sh-muted); line-height: 1.5; }

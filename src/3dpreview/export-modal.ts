@@ -6,7 +6,7 @@
 import { buildExportShell, h } from '../shell/export-shell'
 import { t } from '../shell/i18n'
 import { createSelect } from '../shell/select'
-import { ASPECT_RATIOS } from './aspect-ratio'
+import { ASPECT_RATIOS, aspectById } from './aspect-ratio'
 
 export type ModelFormat = 'glb' | 'obj' | 'stl'
 export type VideoFps = 24 | 30 | 60
@@ -25,15 +25,62 @@ export interface ProjectExportOpts {
   includeConfig: boolean
   /** 本机偏好 + 3D 场景设置 */
   includePrefs: boolean
+  /** 相机状态（工具 ▾ → 相机：模式/视角/居中参数） */
+  includeCam: boolean
+  /** 时间设置（工具 ▾ → 时间：首尾留白/音画对齐） */
+  includeTime: boolean
   /** 已下载资源清单（重下链接） */
   includeResources: boolean
 }
 
+/** 图片导出模式：raster = 位图（PNG/JPEG/WebP…，浏览器原生编码）；vector = 矢量 SVG */
+export type ImageMode = 'raster' | 'vector'
+export type SvgRenderMode = 'wireframe' | 'filled' | 'both'
+export type SvgFillSource = 'material' | 'solid' | 'none'
+export type SvgBackground = 'transparent' | 'solid' | 'scene'
+
+/** 矢量 SVG 导出的高自由度设置 */
+export interface SvgExportOpts {
+  /** 渲染风格：线框 / 填充 / 线框+填充 */
+  renderMode: SvgRenderMode
+  includeModel: boolean // 谱面（音符立体层）
+  includePaths: boolean // 小球轨迹路径线
+  includeBalls: boolean // 小球
+  includeTrails: boolean // 拖尾
+  includeBackground: boolean // 背景（地面/背板/水面）
+  includeHelpers: boolean // 辅助线/参考线
+  /** 线条颜色（线框/描边用） */
+  strokeColor: string
+  strokeWidth: number
+  /** 填充来源：材质原色 / 统一单色 / 不填充 */
+  fillSource: SvgFillSource
+  fillColor: string // fillSource=solid 时使用
+  /** 背景：透明 / 纯色 / 跟随当前场景背景色 */
+  background: SvgBackground
+  bgColor: string // background=solid 时使用
+  width: number
+  height: number
+}
+
+/** SVG 导出中可勾选的布尔开关键（均为 boolean） */
+export type SvgIncludeKey =
+  | 'includeModel'
+  | 'includePaths'
+  | 'includeBalls'
+  | 'includeTrails'
+  | 'includeBackground'
+  | 'includeHelpers'
+
 /** 图片导出：以 96 DPI 为基准倍率，DPI 越高输出像素越大（96→1×，192→2×，384→4×） */
 export interface ImageExportOpts {
+  mode: ImageMode
+  /** 位图模式：浏览器原生支持的 MIME（image/png / image/jpeg / image/webp …），由探测得出 */
+  rasterFormat: string
   dpi: number
   /** 画面比例：source = 跟随当前画布；其余 = 按比例居中裁掉两边（与视频同一口径） */
   ratio: string
+  /** 矢量模式的高自由度设置 */
+  svg: SvgExportOpts
 }
 
 export interface ModelExportOpts {
@@ -69,11 +116,17 @@ export interface ExportApi {
   hasScore(): boolean
   /** 用当前 3D 画布生成一张预览图（dataURL）；失败返回 null */
   captureThumbnail(): string | null
+  /** 生成贴近实际导出的预览图（按当前图片模式/比例/设置渲染），失败返回 null */
+  capturePreview(image: ImageExportOpts): string | null
+  /** 探测浏览器原生支持的位图导出格式（MIME，如 image/png / image/jpeg / image/webp） */
+  probeRasterFormats(): string[]
   exportModel(opts: ModelExportOpts, onProgress: ExportProgress): Promise<void>
   exportVideo(opts: VideoExportOpts, onProgress: ExportProgress, isCancelled: () => boolean): Promise<void>
   exportImage(opts: ImageExportOpts, onProgress: ExportProgress): Promise<void>
   /** 导出工程 zip：MIDI / MusicXML / 各页配置说明 */
   exportProject(opts: ProjectExportOpts, onProgress: ExportProgress): Promise<void>
+  /** 导出弹窗开关时通知主场景：true=冻结实时动画循环并暂停播放，false=恢复 */
+  setPreviewActive?(active: boolean): void
 }
 
 // 各模型格式对「导出内容」的支持矩阵（用户口径：模型不支持贴图）。
@@ -126,6 +179,61 @@ export function openExportModal(api: ExportApi): void {
   document.body.append(modal)
 }
 
+/** 颜色拾取控件 */
+function colorInput(value: string, onChange: (v: string) => void): HTMLElement {
+  const wrap = h('div', 'ex-color')
+  const input = h('input') as HTMLInputElement
+  input.type = 'color'
+  input.value = value
+  input.addEventListener('input', () => onChange(input.value))
+  wrap.append(input)
+  return wrap
+}
+
+/** 数值输入控件 */
+function numberInput(
+  value: number,
+  min: number,
+  max: number,
+  step: number,
+  onChange: (v: number) => void,
+): HTMLElement {
+  const input = h('input') as HTMLInputElement
+  input.type = 'number'
+  input.className = 'ex-num'
+  input.min = String(min)
+  input.max = String(max)
+  input.step = String(step)
+  input.value = String(value)
+  input.addEventListener('input', () => onChange(Number(input.value)))
+  return input
+}
+
+/** 预览放大灯箱：点击遮罩或 × 或 Esc 关闭 */
+function openPreviewLightbox(src: string): void {
+  const overlay = h('div', 'ex-lightbox')
+  const close = () => {
+    overlay.remove()
+    window.removeEventListener('keydown', onKey)
+  }
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') close()
+  }
+  overlay.addEventListener('click', close)
+  const img = h('img', 'ex-lightbox__img') as HTMLImageElement
+  img.src = src
+  img.addEventListener('click', (e) => e.stopPropagation())
+  const btn = h('div', 'ex-lightbox__close')
+  btn.textContent = '×'
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    close()
+  })
+  overlay.append(img, btn)
+  document.body.append(overlay)
+  window.addEventListener('keydown', onKey)
+}
+
 function buildModal(api: ExportApi): HTMLElement {
   const state: {
     kind: ExportKind
@@ -144,8 +252,30 @@ function buildModal(api: ExportApi): HTMLElement {
       includeTrails: false,
     },
     video: { format: 'mp4', fps: 30, quality: '1080p', includeAudio: true, ratio: 'source', bitrateTier: 'mid' },
-    image: { dpi: 192, ratio: 'source' },
-    project: { includeOrigMidi: true, includeMidi: true, includeXml: true, includeConfig: true, includePrefs: true, includeResources: true },
+    image: {
+      mode: 'raster',
+      rasterFormat: 'image/png',
+      dpi: 192,
+      ratio: 'source',
+      svg: {
+        renderMode: 'both',
+        includeModel: true,
+        includePaths: true,
+        includeBalls: true,
+        includeTrails: false,
+        includeBackground: true,
+        includeHelpers: false,
+        strokeColor: '#1a1a1a',
+        strokeWidth: 1,
+        fillSource: 'material',
+        fillColor: '#cccccc',
+        background: 'scene',
+        bgColor: '#ffffff',
+        width: 1920,
+        height: 1080,
+      },
+    },
+    project: { includeOrigMidi: true, includeMidi: true, includeXml: true, includeConfig: true, includePrefs: true, includeCam: true, includeTime: true, includeResources: true },
     exporting: false,
   }
 
@@ -180,7 +310,7 @@ function buildModal(api: ExportApi): HTMLElement {
   const descLabel = h('div', 'ex-sec-label')
   descLabel.textContent = t('ex.about')
   const desc = h('div', 'ex-desc')
-  const prevLabel = h('div', 'ex-sec-label')
+  const prevLabel = h('div', 'ex-sec-label ex-preview__head')
   prevLabel.textContent = t('ex.preview')
   const prevBox = h('div', 'ex-preview')
   const prevImg = h('img', 'ex-preview__img') as HTMLImageElement
@@ -204,6 +334,8 @@ function buildModal(api: ExportApi): HTMLElement {
   function close(): void {
     if (state.exporting) return
     clearTimeout(autoClose)
+    clearTimeout(previewTimer)
+    api.setPreviewActive?.(false)
     // 只在自己还是「当前弹窗」时才交还全局引用：否则旧弹窗那个 1.2s 定时器
     // 会把新开的弹窗一起关掉 / 把 modal 置空，第三次打开就叠出两层
     if (modal === wrap) {
@@ -236,6 +368,7 @@ function buildModal(api: ExportApi): HTMLElement {
             ? 'ex.projectDesc'
             : 'ex.modelDesc',
     )
+    refreshPreview()
   }
 
   function setExporting(on: boolean): void {
@@ -432,45 +565,250 @@ function buildModal(api: ExportApi): HTMLElement {
     return box
   }
 
-  // ── 图片设置（当前画面渲染导出）──
+  // ── 图片设置（当前画面渲染导出）：位图 / 矢量 两模式 ──
   function buildImageSettings(): HTMLElement {
     const box = h('div', 'ex-form')
-    box.append(sectionTitle(t('ex.sec.format')))
-    box.append(
-      row(
-        t('ex.row.imageFormat'),
-        selectFrom([{ value: 'png' as const, label: 'PNG · 无损' }], 'png', () => undefined),
-      ),
-    )
 
-    box.append(sectionTitle(t('ex.sec.imageSize')))
-    // DPI：以 96 DPI 为基准倍率，输出像素 = 画布像素 × (DPI / 96)
-    const dpiSel = selectFrom(
-      [
-        { value: '96' as const, label: t('ex.dpi.96') },
-        { value: '192' as const, label: t('ex.dpi.192') },
-        { value: '288' as const, label: t('ex.dpi.288') },
-        { value: '384' as const, label: t('ex.dpi.384') },
-      ],
-      String(state.image.dpi) as '96' | '192' | '288' | '384',
-      (v) => (state.image.dpi = Number(v)),
-    )
-    box.append(row(t('ex.row.dpi'), dpiSel))
+    // 模式切换：位图 / 矢量
+    box.append(sectionTitle(t('ex.sec.mode')))
+    const modeRow = h('div', 'ex-seg')
+    const modeBtns: Record<ImageMode, HTMLButtonElement> = {
+      raster: h('button', 'ex-seg__btn') as HTMLButtonElement,
+      vector: h('button', 'ex-seg__btn') as HTMLButtonElement,
+    }
+    modeBtns.raster.textContent = t('ex.mode.raster')
+    modeBtns.vector.textContent = t('ex.mode.vector')
+    const syncMode = () => {
+      for (const k of Object.keys(modeBtns) as ImageMode[]) {
+        modeBtns[k].classList.toggle('ex-seg__btn--on', state.image.mode === k)
+      }
+    }
+    modeBtns.raster.addEventListener('click', () => {
+      state.image.mode = 'raster'
+      syncMode()
+      syncRight()
+      schedulePreview()
+    })
+    modeBtns.vector.addEventListener('click', () => {
+      state.image.mode = 'vector'
+      applyRatioToSvgSize()
+      syncMode()
+      syncRight()
+      schedulePreview()
+    })
+    modeRow.append(modeBtns.raster, modeBtns.vector)
+    box.append(modeRow)
+    syncMode()
 
-    // 画面比例：source = 跟随当前画布；其余按比例居中裁掉两边（与视频同一口径）
-    const ratioSel = selectFrom(
-      [
-        { value: 'source', label: t('ex.ratio.source') },
-        ...ASPECT_RATIOS.map((r) => ({ value: r.id, label: r.id })),
-      ],
-      state.image.ratio,
-      (v) => (state.image.ratio = v),
-    )
-    box.append(row(t('ex.row.ratio'), ratioSel))
+    if (state.image.mode === 'raster') {
+      box.append(sectionTitle(t('ex.sec.format')))
+      // 位图格式：只列出浏览器原生编码支持的格式
+      const fmts = api.probeRasterFormats()
+      const fmtLabel = (mime: string): string =>
+        ({
+          'image/png': 'PNG · 无损',
+          'image/jpeg': 'JPEG · 有损',
+          'image/webp': 'WebP',
+          'image/avif': 'AVIF · 高效',
+          'image/bmp': 'BMP · 无压缩',
+        })[mime] ?? mime
+      if (!fmts.includes(state.image.rasterFormat)) state.image.rasterFormat = fmts[0] ?? 'image/png'
+      const fmtSel = selectFrom(
+        fmts.map((f) => ({ value: f, label: fmtLabel(f) })),
+        state.image.rasterFormat,
+        (v) => {
+          state.image.rasterFormat = v
+          schedulePreview()
+        },
+      )
+      box.append(row(t('ex.row.imageFormat'), fmtSel))
 
-    const note = h('div', 'ex-note')
-    note.textContent = t('ex.imageNote')
-    box.append(note)
+      box.append(sectionTitle(t('ex.sec.imageSize')))
+      const dpiSel = selectFrom(
+        [
+          { value: '96' as const, label: t('ex.dpi.96') },
+          { value: '192' as const, label: t('ex.dpi.192') },
+          { value: '288' as const, label: t('ex.dpi.288') },
+          { value: '384' as const, label: t('ex.dpi.384') },
+        ],
+        String(state.image.dpi) as '96' | '192' | '288' | '384',
+        (v) => {
+          state.image.dpi = Number(v)
+          schedulePreview()
+        },
+      )
+      box.append(row(t('ex.row.dpi'), dpiSel))
+
+      const ratioSel = selectFrom(
+        [
+          { value: 'source', label: t('ex.ratio.source') },
+          ...ASPECT_RATIOS.map((r) => ({ value: r.id, label: r.id })),
+        ],
+        state.image.ratio,
+        (v) => {
+          state.image.ratio = v
+          schedulePreview()
+        },
+      )
+      box.append(row(t('ex.row.ratio'), ratioSel))
+
+      const note = h('div', 'ex-note')
+      note.textContent = t('ex.imageNote')
+      box.append(note)
+    } else {
+      // ── 矢量 SVG 设置 ──
+      const wip = h('div', 'ex-wip')
+      wip.textContent = t('ex.svgWip')
+      box.append(wip)
+      box.append(sectionTitle(t('ex.sec.svgRender')))
+      const rmSel = selectFrom<SvgRenderMode>(
+        [
+          { value: 'wireframe', label: t('ex.svg.wireframe') },
+          { value: 'filled', label: t('ex.svg.filled') },
+          { value: 'both', label: t('ex.svg.both') },
+        ],
+        state.image.svg.renderMode,
+        (v) => {
+          state.image.svg.renderMode = v
+          schedulePreview()
+        },
+      )
+      box.append(row(t('ex.svg.renderMode'), rmSel))
+
+      box.append(sectionTitle(t('ex.sec.content')))
+      const checks: Array<{ key: SvgIncludeKey; labelKey: string }> = [
+        { key: 'includeModel', labelKey: 'ex.inc.model' },
+        { key: 'includePaths', labelKey: 'ex.inc.paths' },
+        { key: 'includeBalls', labelKey: 'ex.inc.balls' },
+        { key: 'includeTrails', labelKey: 'ex.inc.trails' },
+        { key: 'includeBackground', labelKey: 'ex.inc.background' },
+        { key: 'includeHelpers', labelKey: 'ex.inc.helpers' },
+      ]
+      for (const c of checks) {
+        const lab = h('label', 'ex-check')
+        const input = h('input') as HTMLInputElement
+        input.type = 'checkbox'
+        input.checked = !!state.image.svg[c.key]
+        input.addEventListener('change', () => {
+          state.image.svg[c.key] = input.checked
+          schedulePreview()
+        })
+        const span = h('span')
+        span.textContent = t(c.labelKey)
+        lab.append(input, span)
+        box.append(lab)
+      }
+
+      box.append(sectionTitle(t('ex.sec.svgStyle')))
+      box.append(
+        row(
+          t('ex.svg.strokeColor'),
+          colorInput(state.image.svg.strokeColor, (v) => {
+            state.image.svg.strokeColor = v
+            schedulePreview()
+          }),
+        ),
+      )
+      box.append(
+        row(
+          t('ex.svg.strokeWidth'),
+          numberInput(state.image.svg.strokeWidth, 0.2, 20, 0.1, (v) => {
+            state.image.svg.strokeWidth = v
+            schedulePreview()
+          }),
+        ),
+      )
+      const fsSel = selectFrom<SvgFillSource>(
+        [
+          { value: 'material', label: t('ex.svg.fillMaterial') },
+          { value: 'solid', label: t('ex.svg.fillSolid') },
+          { value: 'none', label: t('ex.svg.fillNone') },
+        ],
+        state.image.svg.fillSource,
+        (v) => {
+          state.image.svg.fillSource = v
+          syncRight()
+          schedulePreview()
+        },
+      )
+      box.append(row(t('ex.svg.fillSource'), fsSel))
+      if (state.image.svg.fillSource === 'solid') {
+        box.append(
+          row(
+            t('ex.svg.fillColor'),
+            colorInput(state.image.svg.fillColor, (v) => {
+              state.image.svg.fillColor = v
+              schedulePreview()
+            }),
+          ),
+        )
+      }
+
+      box.append(sectionTitle(t('ex.sec.svgBg')))
+      const bgSel = selectFrom<SvgBackground>(
+        [
+          { value: 'transparent', label: t('ex.svg.bgTransparent') },
+          { value: 'solid', label: t('ex.svg.bgSolid') },
+          { value: 'scene', label: t('ex.svg.bgScene') },
+        ],
+        state.image.svg.background,
+        (v) => {
+          state.image.svg.background = v
+          syncRight()
+          schedulePreview()
+        },
+      )
+      box.append(row(t('ex.svg.background'), bgSel))
+      if (state.image.svg.background === 'solid') {
+        box.append(
+          row(
+            t('ex.svg.bgColor'),
+            colorInput(state.image.svg.bgColor, (v) => {
+              state.image.svg.bgColor = v
+              schedulePreview()
+            }),
+          ),
+        )
+      }
+
+      box.append(sectionTitle(t('ex.sec.imageSize')))
+      const ratioSel = selectFrom(
+        [
+          { value: 'source', label: t('ex.ratio.source') },
+          ...ASPECT_RATIOS.map((r) => ({ value: r.id, label: r.id })),
+        ],
+        state.image.ratio,
+        (v) => {
+          state.image.ratio = v
+          applyRatioToSvgSize()
+          syncRight()
+          schedulePreview()
+        },
+      )
+      box.append(row(t('ex.row.ratio'), ratioSel))
+      box.append(
+        row(
+          t('ex.svg.width'),
+          numberInput(state.image.svg.width, 100, 8000, 1, (v) => {
+            state.image.svg.width = v
+            schedulePreview()
+          }),
+        ),
+      )
+      box.append(
+        row(
+          t('ex.svg.height'),
+          numberInput(state.image.svg.height, 100, 8000, 1, (v) => {
+            state.image.svg.height = v
+            schedulePreview()
+          }),
+        ),
+      )
+
+      const note = h('div', 'ex-note')
+      note.textContent = t('ex.svgNote')
+      box.append(note)
+    }
     return box
   }
 
@@ -497,6 +835,8 @@ function buildModal(api: ExportApi): HTMLElement {
       { key: 'includeOrigMidi', labelKey: 'ex.inc.origMidi', supported: hasOrig },
       { key: 'includeConfig', labelKey: 'ex.inc.config', supported: true },
       { key: 'includePrefs', labelKey: 'ex.inc.prefs', supported: true },
+      { key: 'includeCam', labelKey: 'ex.inc.cam', supported: true },
+      { key: 'includeTime', labelKey: 'ex.inc.time', supported: true },
       { key: 'includeResources', labelKey: 'ex.inc.resources', supported: true },
     ]
     for (const it of items) {
@@ -577,19 +917,80 @@ function buildModal(api: ExportApi): HTMLElement {
     return box
   }
 
+  // 预览防抖状态 + 手动刷新按钮：必须在 syncKind() 之前声明，
+  // 避免初始化调用 refreshPreview→syncRefreshBtn 时命中 const/let 的 TDZ
+  let previewTimer = 0
+  let previewLast = 0
+  let previewDirty = false
+  const refreshBtn = h('button', 'ex-refresh') as HTMLButtonElement
+  refreshBtn.type = 'button'
+  refreshBtn.textContent = t('ex.previewRefresh')
+  refreshBtn.title = t('ex.previewRefreshHint')
+  function syncRefreshBtn(): void {
+    refreshBtn.classList.toggle('ex-refresh--dirty', previewDirty)
+    refreshBtn.textContent = previewDirty ? t('ex.previewRefreshPending') : t('ex.previewRefresh')
+  }
+  refreshBtn.addEventListener('click', () => {
+    clearTimeout(previewTimer)
+    refreshPreview()
+  })
+
   syncKind()
   syncRight()
 
-  // 预览缩略图
-  const thumb = api.captureThumbnail()
-  if (thumb) {
-    prevImg.src = thumb
-    prevImg.style.display = 'block'
-    prevPlaceholder.hidden = true
-  } else {
-    prevImg.style.display = 'none'
-    prevPlaceholder.hidden = false
+  // 切换比例时给矢量模式一个默认输出尺寸（基准宽 1920，按比例算高）
+  function applyRatioToSvgSize(): void {
+    const r = aspectById(state.image.ratio)
+    if (r) {
+      state.image.svg.width = 1920
+      state.image.svg.height = Math.max(100, Math.round(1920 / r.ratio))
+    }
   }
+
+  // 预览：图片类按当前模式/比例/设置生成贴近导出的预览；其余类用全画面缩略图
+  function refreshPreview(): void {
+    previewDirty = false
+    syncRefreshBtn()
+    const thumb = state.kind === 'image' ? api.capturePreview(state.image) : api.captureThumbnail()
+    if (thumb) {
+      prevImg.src = thumb
+      prevImg.style.display = 'block'
+      prevPlaceholder.hidden = true
+    } else {
+      prevImg.style.display = 'none'
+      prevPlaceholder.hidden = false
+    }
+  }
+
+  // 防抖调度：拖动颜色/数字时高频触发会拖垮渲染，合并成 320ms 一次（首帧立即、末尾收尾）
+  function schedulePreview(): void {
+    previewDirty = true
+    syncRefreshBtn()
+    const now = Date.now()
+    const remaining = 320 - (now - previewLast)
+    if (remaining <= 0) {
+      previewLast = now
+      refreshPreview()
+    } else {
+      clearTimeout(previewTimer)
+      previewTimer = window.setTimeout(() => {
+        previewLast = Date.now()
+        refreshPreview()
+      }, remaining)
+    }
+  }
+  prevLabel.append(refreshBtn)
+
+  // 点击预览 → 放大查看
+  prevImg.style.cursor = 'zoom-in'
+  prevImg.title = t('ex.previewZoom')
+  prevImg.addEventListener('click', () => {
+    if (prevImg.src) openPreviewLightbox(prevImg.src)
+  })
+
+  // 打开弹窗即冻结场景（暂停实时动画循环），预览独占 renderer 且画面稳定；close 时恢复
+  api.setPreviewActive?.(true)
+  refreshPreview()
 
   return wrap
 }

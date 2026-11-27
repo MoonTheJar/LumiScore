@@ -47,10 +47,13 @@ import {
 import '../3dpreview/texture-resource'
 import { ensureTextureCatalog } from '../3dpreview/texture-resource'
 import { PUB_ROOT } from '../shared/pub-root'
+import { icons } from '../ui/icons'
 
 // 反馈入口：B站动态
 const FEEDBACK_URL = 'https://b23.tv/uG8sv2m'
-const APP_VERSION = 'v0.1.5'
+// 开源仓库
+const GITHUB_URL = 'https://github.com/MoonTheJar/LumiScore'
+const APP_VERSION = 'v0.1.6'
 
 export type ShellStep = 1 | 2 | 3 | 4 | 5
 
@@ -689,6 +692,15 @@ function aboutHtml(): string {
   return `
     <p style="margin:12px 0 0">${t('about.tagline')}</p>
     <p>${t('about.intro')}</p>
+    <div class="sh-about-gh">
+      <a class="sh-about-gh__link" href="${GITHUB_URL}" target="_blank" rel="noopener" aria-label="${t('settings.github.aria')}">
+        <span class="sh-about-gh__icon">${icons.github(18)}</span>
+        <span class="sh-about-gh__text">
+          <strong>${t('about.github.label')}</strong>
+          <em>${t('about.github.desc')}</em>
+        </span>
+      </a>
+    </div>
     <p>${t('about.privacy')}</p>
     <h3 data-i18n="about.legal"></h3>
     <p>${t('about.legal.note')}</p>
@@ -1196,7 +1208,17 @@ export function mountShell(opts: ShellOptions): ShellHandle {
     const barR = document
       .querySelector<HTMLElement>('.sh-float:has(> .sh-pb)')
       ?.getBoundingClientRect()
-    const bottomH = barR && barR.height > 0 ? Math.max(0, window.innerHeight - barR.top) : 0
+    let bottomH = 0
+    if (barR && barR.height > 0) {
+      // 控件条正常贴底时，量「条顶到视口底」（含条身 + 底部留白），与原算法一致；
+      // 一旦条被异常推离底部（浏览器控制台开关触发 resize，悬浮窗被夹上去后不回位），
+      // 退化为条自身高度兜底——否则 --sh-dock-bottom 会爆炸、画布下边界上移，
+      // 导致其它悬浮窗（如场景设置窗）出现下方隐形墙、拖不下去。
+      const gapToBottom = window.innerHeight - barR.bottom
+      bottomH = gapToBottom <= barR.height
+        ? Math.max(0, window.innerHeight - barR.top)
+        : barR.height
+    }
     root.style.setProperty('--sh-dock-top', `${Math.round(Math.max(0, topH))}px`)
     root.style.setProperty('--sh-dock-bottom', `${Math.round(bottomH)}px`)
     // 画布避让「背板且非悬浮」的控件区：顶栏（超宽段无顶栏，归零）+ 右侧栏。
@@ -1538,14 +1560,23 @@ export function mountShell(opts: ShellOptions): ShellHandle {
       closeDropdowns()
       openHelp()
     })
-    const aboutItem = el('button', 'sh-dd-item')
-    aboutItem.type = 'button'
-    aboutItem.textContent = t('settings.about')
-    aboutItem.addEventListener('click', () => {
+    const aboutRow = el('div', 'sh-dd-row')
+    const aboutBtn = el('button', 'sh-dd-row__label')
+    aboutBtn.type = 'button'
+    aboutBtn.textContent = t('settings.about')
+    aboutBtn.addEventListener('click', () => {
       closeDropdowns()
       openAbout()
     })
-    setDrop.append(helpItem, aboutItem)
+    const ghCircle = el('a', 'sh-gh-circle')
+    ghCircle.href = GITHUB_URL
+    ghCircle.target = '_blank'
+    ghCircle.rel = 'noopener'
+    ghCircle.setAttribute('aria-label', t('settings.github.aria'))
+    ghCircle.title = t('settings.github.aria')
+    ghCircle.innerHTML = icons.github(14)
+    aboutRow.append(aboutBtn, ghCircle)
+    setDrop.append(helpItem, aboutRow)
 
     // 反馈与建议（测试）：非强制登录，新开 B站私信页
     setDrop.append(el('div', 'sh-dd-sep'))

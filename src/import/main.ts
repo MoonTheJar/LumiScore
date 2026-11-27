@@ -197,7 +197,8 @@ document.querySelectorAll<HTMLButtonElement>('.p1-sample[data-sample]').forEach(
 })
 async function loadPackedSample(btn: HTMLButtonElement): Promise<void> {
   const fileId = btn.dataset.sample!
-  const showName = btn.dataset.sampleName ?? fileId
+  // 标题已由 applyI18n 写成当前语言，直接取它当载入提示里的曲名（中英适配）
+  const showName = btn.querySelector('.p1-sample__title')?.textContent?.trim() || fileId
   setStatus(t('p1.status.sample', { name: showName }))
   try {
     const res = await fetch(`${PUB_ROOT}samples/${fileId}`)

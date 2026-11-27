@@ -1,39 +1,24 @@
-# Sample MIDIs
+# 内置示例乐谱数据包
 
-The Bach and Chopin files were sourced from the [Mutopia Project](https://www.mutopiaproject.org/), which hosts freely-licensed classical scores and their MIDI renderings. Attribution and license per file, following each typesetter's declaration inside the source `.ly` file.
+`scripts/gen-sample-data.ts` 把 `public/samples/` 下的源文件转成纯 MusicXML 数据包（`.md`），
+供导入页三张演示卡直接载入。运行 `npm run gen:samples` 重新生成。
 
-## bach-prelude-in-c.mid
+## 当前示例（公共领域乐谱）
 
-- **Composition:** J.S. Bach — *Prelude No. 1 in C major*, BWV 846 (Well-Tempered Clavier, Book 1) — public-domain composition.
-- **Typesetter:** Tobias Erbsland (`te@profzone.ch`)
-- **License:** [Creative Commons Public Domain Dedication](http://creativecommons.org/licenses/publicdomain/)
-- **Source:** https://www.mutopiaproject.org/ftp/BachJS/BWV846/wtk1-prelude1/
+| 数据包 | 源文件 | 说明 |
+|---|---|---|
+| `bach-prelude-c.md` | `bach-prelude-c-bwv846.mxl` | 巴赫：C 大调前奏曲 BWV 846（公共领域） |
+| `bach-minuet-g.md` | `bach-minuet-g-bwv-anh114.mxl` | 巴赫：G 大调小步舞曲 BWV Anh.114（公共领域） |
+| `chopin-prelude-e-minor.md` | `chopin-prelude-e-minor-op28-4.mxl` | 肖邦：E 小调前奏曲 Op.28 No.4（公共领域） |
 
-## chopin-nocturne-op9-2.mid
+支持源格式：`.mxl`（fflate 解包取根文件）、`.musicxml`/`.xml`（直接读取）、`.mid`（经 midi-xml 转 MusicXML）。
 
-- **Composition:** Frédéric Chopin — *Nocturne in E♭ major*, Op. 9 No. 2 — public-domain composition.
-- **Typesetter:** Renato Biolcati Rinaldi (http://www.nightpassage.org)
-- **License:** [Creative Commons Attribution-ShareAlike 3.0](http://creativecommons.org/licenses/by-sa/3.0/)
-- **Source:** https://www.mutopiaproject.org/ftp/ChopinFF/O9/chopin_nocturne_op9_n2/
+## 主站开发用素材（非示例卡）
 
-## kamisama-no-manimani.musicxml
+`bach-prelude-in-c.mid`、`chopin-nocturne-op9-2.mid`、`satie-gnossienne-1.mid` 仅用于主站
+SamplesGrid 开发预览（`src/core/samples.ts`），不属于 lumiscore 部署的示例卡。
 
-- **Composition:** エオ (Eo) — *神のまにまに*（神的随波逐流），VOCALOID 作品（鏡音リン・レン演唱）。
-- **Source:** 用户提供、MuseScore Studio 4.7.4 导出的钢琴改编 MusicXML，仅作本项目的演示/预览用途（demo/preview only）。
-- **Note:** 原曲及本改编的著作权归 respective 权利人所有，勿用于再分发。
+## 数据包格式
 
-## satie-gnossienne-1.mid（仅主站开发用）
-
-- **Composition:** Erik Satie — *Gnossienne No. 1* — public-domain composition.
-- **Typesetter:** Knute Snortum (https://www.musicwithknute.com/)
-- **License:** [Creative Commons Attribution-ShareAlike 4.0 International](http://creativecommons.org/licenses/by-sa/4.0/)
-- **Source:** https://www.mutopiaproject.org/ftp/SatieE/Gnossienne/no_1/
-- 说明：已不再作为 lumiscore 示例卡（被 kamisama-no-manimani 替换），仅供主站开发模式 `core/samples.ts` 引用，不打包进 lumiscore 静态包。
-
-## License notes
-
-- The Bach file is in the public domain; no restrictions.
-- The Chopin file is CC BY-SA 3.0 — redistribution is fine, attribution is required, and derivative renderings inherit the same license.
-- kamisama-no-manimani.mid is a user-provided fan arrangement kept for demo purposes only; do not redistribute.
-- This application does not modify the MIDI content; it plays and visualizes it unchanged.
-- Attribution is preserved in this file; if you fork the project, keep this README in the distribution.
+`.md` 内容为去掉首尾空白的 MusicXML 文本。导入页通过 `fetch('samples/<id>.md')` 取文本后，
+走与用户上传完全相同的解析管线（`parseScore` → 预处理 → Verovio 渲染 → 2D/3D）。

@@ -36,6 +36,12 @@ export const EXPORT_CSS = `
   overflow:hidden;background:var(--sh-bg);display:flex;align-items:center;justify-content:center}
 .ex-preview__img{width:100%;height:100%;object-fit:cover;display:block}
 .ex-preview__ph{color:var(--sh-faint);font-size:12px;padding:0 12px;text-align:center}
+.ex-preview__head{display:flex;align-items:center;gap:8px}
+.ex-refresh{margin-left:auto;font:inherit;font-size:11px;font-weight:600;padding:3px 10px;border:1px solid var(--sh-border);
+  border-radius:99px;background:var(--sh-surface-2);color:var(--sh-muted);cursor:pointer;transition:color .15s,border-color .15s,background .15s}
+.ex-refresh:hover{color:var(--sh-text);border-color:var(--sh-accent)}
+.ex-refresh--dirty{color:var(--sh-accent);border-color:var(--sh-accent);background:var(--sh-accent-soft);animation:ex-refresh-pulse 1.2s ease-in-out infinite}
+@keyframes ex-refresh-pulse{0%,100%{opacity:1}50%{opacity:.55}}
 .ex-form{display:flex;flex-direction:column;gap:8px}
 .ex-row{display:grid;grid-template-columns:88px 1fr;align-items:center;gap:12px}
 .ex-row__label{color:var(--sh-muted);font-size:13px}
@@ -49,6 +55,9 @@ export const EXPORT_CSS = `
 .ex-check--off{opacity:.45;cursor:not-allowed}
 .ex-note{margin-top:8px;padding:9px 11px;border-radius:9px;font-size:11.5px;line-height:1.65;
   color:var(--sh-faint);background:var(--sh-surface-2);border:1px solid var(--sh-border)}
+.ex-wip{margin-bottom:2px;padding:8px 12px;border-radius:9px;font-size:11.5px;line-height:1.6;
+  color:var(--sh-accent);background:color-mix(in srgb,var(--sh-accent) 10%,transparent);
+  border:1px solid color-mix(in srgb,var(--sh-accent) 35%,transparent)}
 .ex-foot{display:flex;align-items:center;gap:10px;padding:12px 16px;border-top:1px solid var(--sh-border)}
 .ex-prog{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px}
 .ex-prog__bar{height:7px;border-radius:99px;background:var(--sh-surface-2);overflow:hidden}
@@ -62,4 +71,26 @@ export const EXPORT_CSS = `
   .ex-right{flex:0 0 auto;overflow:visible}
   .ex-preview{max-width:240px}
 }
+
+/* ── 0.1.6：图片导出（位图 / 矢量）新增控件 ── */
+.ex-seg{display:flex;gap:6px;padding:4px;border:1px solid var(--sh-border);border-radius:10px;
+  background:var(--sh-surface-2)}
+.ex-seg__btn{flex:1;padding:7px 10px;border:1px solid transparent;border-radius:7px;
+  background:transparent;color:var(--sh-muted);font:inherit;font-size:12.5px;cursor:pointer;transition:all .12s}
+.ex-seg__btn:hover{color:var(--sh-text)}
+.ex-seg__btn--on{background:var(--sh-accent);border-color:var(--sh-accent);color:#fff;font-weight:600}
+.ex-color{display:flex}
+.ex-color input[type=color]{width:38px;height:30px;padding:2px;border:1px solid var(--sh-border);
+  border-radius:7px;background:var(--sh-surface-2);cursor:pointer}
+.ex-num{width:100%;height:32px;padding:0 9px;border:1px solid var(--sh-border);border-radius:8px;
+  background:var(--sh-surface-2);color:var(--sh-text);font:inherit;font-size:13px}
+.ex-lightbox{position:fixed;inset:0;z-index:1500;display:flex;align-items:center;justify-content:center;
+  padding:32px;background:rgba(0,0,0,.82);cursor:zoom-out;animation:ex-fade .15s ease}
+.ex-lightbox__img{max-width:92vw;max-height:88vh;object-fit:contain;border-radius:8px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);cursor:default}
+.ex-lightbox__close{position:absolute;top:18px;right:22px;width:38px;height:38px;display:flex;
+  align-items:center;justify-content:center;border-radius:50%;background:rgba(255,255,255,.12);
+  color:#fff;font-size:22px;line-height:1;cursor:pointer;user-select:none;transition:background .12s}
+.ex-lightbox__close:hover{background:rgba(255,255,255,.25)}
+@keyframes ex-fade{from{opacity:0}to{opacity:1}}
 `

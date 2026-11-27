@@ -44,6 +44,12 @@ import { createPlayerBar, type PlayerBarHandle } from "../shell/playerbar";
 import { goStep, mountShell, confirmDialog, type ShellTool } from "../shell/shell";
 import { downloadProjectZip } from "../shell/project-export";
 import { createAspectOverlay, visibleViewRect } from "./aspect-overlay";
+import {
+	mountCenterGuide,
+	showCenterGuide,
+	hideCenterGuide,
+	isCenterGuideShown,
+} from "./center-guide";
 import { aspectById, cropRectFor } from "./aspect-ratio";
 import { injectLitAnimation } from "./gltf-lit-anim";
 import { createTrackPanel, type TrackPanelHandle } from "../shell/tracks";
@@ -80,6 +86,7 @@ import {
 	type MatOverrides,
 	type MatTune,
 	makeBallMaterial,
+	type AnyPreset,
 	makeBaseMaterial,
 	makeInkMaterial,
 	makeLitMaterial,
@@ -95,7 +102,10 @@ import { fetchAssetInfo, mapUrl as phMapUrl } from "./polyhaven";
 import {
 	createSettingsPanel,
 	type LightSettings,
+	type LitMode,
+	type PathBoolKey,
 	type PathNumKey,
+	type PathStrKey,
 	type RepairSettings,
 	type SurfSettings,
 	type SettingsPanelHandle,
@@ -113,6 +123,7 @@ import {
 import { GLTFExporter } from "three/examples/jsm/exporters/GLTFExporter.js";
 import { OBJExporter } from "three/examples/jsm/exporters/OBJExporter.js";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
+import { SVGRenderer } from "three/examples/jsm/renderers/SVGRenderer.js";
 import {
 	OfflineContext,
 	getContext,
@@ -159,6 +170,8 @@ let surfaceDirty = false;
 // 测试台模式（src/bench 入口置标记）：锁定场景编辑、不读不写用户场景存档，
 // 数据来自测试台写死的 fixture（sessionStorage）。开关关闭时主项目行为零变化。
 const BENCH = (window as unknown as Record<string, unknown>).__LUMI_BENCH__ === true;
+// 相机对中辅助层：与画面比例层一样是纯 DOM 覆盖层，挂 body 即可（不进 3D 场景）
+mountCenterGuide();
 const shell = mountShell({
 	step: 5,
 	title: sessionStorage.getItem("midee.name") ?? t("common.untitled"),
@@ -607,6 +620,11 @@ const surf: SurfSettings = {
 	litEnabled: true, // 音符点亮总开关
 	litFollowBall: true, // 点亮色默认跟随小球/路径色（开着时面板隐藏下面的颜色项）
 	litColor: 0xffd166, // 不跟随时的自定义点亮色
+	litTie: "stream", // 连音线：默认流式点亮
+	litSlur: "off", // 圆滑线：默认关闭
+	litFingering: "off", // 指法：默认关闭
+	litChordMark: "off", // 和弦标记：默认关闭
+	litLyric: "off", // 歌词：默认关闭（只控制发光，不控制显示）
 	waterOn: false,
 	waterAmp: 0.03,
 	waterSpeed: 0.6,
@@ -638,6 +656,8 @@ const surf: SurfSettings = {
 	pathDefaultColors: [], // 每条路径的默认色（连线页带过来的颜色）
 	selectedPaths: [], // 空数组 = 全选
 	pathNums: {}, // 逐路径数值覆盖（小球/点亮），缺省 = 吃上面的全局值
+	pathStrs: {}, // 逐路径字符串覆盖（材质预设/光晕样式），缺省 = 吃全局
+	pathBools: {}, // 逐路径布尔覆盖（撞击粒子），缺省 = 吃全局
 	repair: {
 		patrolOn: true,
 		autoApply: true,
@@ -690,6 +710,10 @@ function normalizeSurf(): void {
 	if (!Array.isArray(surf.selectedPaths)) surf.selectedPaths = [];
 	if (!surf.pathNums || typeof surf.pathNums !== "object")
 		surf.pathNums = {};
+	if (!surf.pathStrs || typeof surf.pathStrs !== "object")
+		surf.pathStrs = {};
+	if (!surf.pathBools || typeof surf.pathBools !== "object")
+		surf.pathBools = {};
 	// 巡检设置单独补：老存档整块都没有，浅层 Object.assign 不会替嵌套对象补洞
 	const rp = surf.repair as Partial<typeof surfDefaults.repair> | undefined;
 	surf.repair = { ...surfDefaults.repair, ...(rp ?? {}) };
@@ -879,6 +903,50 @@ const PITCH_MIN = 5; // 俯角下限：不允许钻到水面以下/与桌面齐�
 const PITCH_MAX = 87; // 俯角上限：避免 gimbal
 const CAM_DEFAULT = { focus: 0, r: 4 * SCORE_SCALE, rx: 52, ry: 0, rz: 0 }; // r 是世界单位，跟着 SCORE_SCALE 走，否则会被 rMin 钳死
 
+// ── 相机设置持久化（midee.cam3d）：模式/焦点/球坐标/居中参数/自由位姿 ──
+// 与 surf3d 同一套思路：整份 JSON 存本机，刷新/重开不再丢；工程 zip 经
+// project.json 的 cam 字段携带（见 shell/project-state.ts）。损坏/缺省用默认。
+const CAM_KEY = "midee.cam3d";
+interface CamFreePose {
+	x: number;
+	y: number;
+	z: number;
+	yaw: number;
+	pitch: number;
+	roll: number;
+	touched: boolean;
+}
+interface CamPrefs {
+	mode: "timeline" | "free";
+	focus: number;
+	r: number;
+	rx: number;
+	ry: number;
+	rz: number;
+	tol: number;
+	off: number;
+	free: CamFreePose | null;
+}
+function finite(v: unknown, dflt: number): number {
+	return typeof v === "number" && Number.isFinite(v) ? v : dflt;
+}
+let camSaved: CamPrefs | null = null;
+try {
+	const raw = JSON.parse(localStorage.getItem(CAM_KEY) ?? "null") as CamPrefs | null;
+	if (raw && typeof raw === "object") camSaved = raw;
+} catch {
+	/* 损坏的存档忽略，用默认 */
+}
+if (camSaved) {
+	camMode = camSaved.mode === "free" ? "free" : "timeline";
+	camFollowing = camMode === "timeline";
+	focusX = Math.max(0, finite(camSaved.focus, 0));
+	radius = Math.max(0.1, finite(camSaved.r, radius));
+	rotX = clamp(finite(camSaved.rx, rotX), -180, 180);
+	rotY = clamp(finite(camSaved.ry, rotY), -180, 180);
+	rotZ = clamp(finite(camSaved.rz, rotZ), -180, 180);
+}
+
 const deg2rad = (d: number): number => (d * Math.PI) / 180;
 
 applyLighting(); // 初始光照（surf / deg2rad 均已就绪）
@@ -937,14 +1005,43 @@ const camTolSlide = document.getElementById("camTolSlide")! as HTMLInputElement;
 const camTolInput = document.getElementById("camTol")! as HTMLInputElement;
 const camOffSlide = document.getElementById("camOffSlide")! as HTMLInputElement;
 const camOffInput = document.getElementById("camOff")! as HTMLInputElement;
+// 存档里有居中参数 → 先写回输入框（bindSliderPair 的初值填充要吃到它）
+if (camSaved) {
+	const ts = String(finite(camSaved.tol, 1.5));
+	const os = String(finite(camSaved.off, 0));
+	camTolSlide.value = ts;
+	camTolInput.value = ts;
+	camOffSlide.value = os;
+	camOffInput.value = os;
+}
 let camCenterTol = Number(camTolSlide.value) || 0;
 let camCenterOffset = Number(camOffSlide.value) || 0;
 bindSliderPair(camTolSlide, camTolInput, (v) => {
 	camCenterTol = Math.max(0, v);
+	saveCamPrefs(); // 容忍度不走 applyCam/syncPanel，单独落盘
 });
+// 居中偏移：拖滑轨时显示对中辅助线（居中十字 + 球标记），松手即消失；
+// 播放/暂停都即时生效（fromPlay=true 不触发 seek，不跳播放时间）。
+let camOffRaf = 0;
 bindSliderPair(camOffSlide, camOffInput, (v) => {
 	camCenterOffset = v;
+	// 合并同帧多次 input：下一帧只对齐一次焦点，避免高频 applyViewCrop 导致卡顿
+	if (camOffRaf) return;
+	camOffRaf = requestAnimationFrame(() => {
+		camOffRaf = 0;
+		const bx = followBallX();
+		setFocusX((bx ?? focusX) + camCenterOffset, true);
+	});
 });
+camOffSlide.addEventListener("pointerdown", () => showCenterGuide());
+const hideGuideIfShown = (): void => {
+	if (isCenterGuideShown()) hideCenterGuide();
+};
+window.addEventListener("pointerup", hideGuideIfShown);
+window.addEventListener("pointercancel", hideGuideIfShown);
+// 数字框手动输入时也给参考线
+camOffInput.addEventListener("focus", () => showCenterGuide());
+camOffInput.addEventListener("blur", () => hideCenterGuide());
 // ── 顶栏「工具 ▾」：首尾 Mid 偏移量 = 第三页「播放 → 起点/终点留白」同一份数据
 // （进来先读第三页的值，改完写回 store，回第三页看到的就是这个数） ──
 const axisLeadSlide = document.getElementById("axisLeadSlide")! as HTMLInputElement;
@@ -979,6 +1076,23 @@ function applyCamModeUI(): void {
 	camSetFree.hidden = camMode !== "free";
 }
 applyCamModeUI();
+// 存档里是自由相机且用户当时已接管 → 把六个框填回存档位姿并打到相机上
+// （applyFreePose 会置 freeTouched，applyCam 从此不再用球坐标覆盖它）
+if (camMode === "free" && camSaved?.free) {
+	const f = camSaved.free;
+	const put = (pair: readonly [HTMLInputElement, HTMLInputElement], v: number): void => {
+		const s = String(Math.round(v * 100) / 100);
+		pair[0].value = s;
+		pair[1].value = s;
+	};
+	put(freeInputs.x, finite(f.x, 0));
+	put(freeInputs.y, finite(f.y, 300));
+	put(freeInputs.z, finite(f.z, 300));
+	put(freeInputs.yaw, finite(f.yaw, 0));
+	put(freeInputs.pitch, finite(f.pitch, 0));
+	put(freeInputs.roll, finite(f.roll, 0));
+	if (f.touched) applyFreePose();
+}
 
 // ── 工具下拉的两个 tab：相机 / 时间 ──
 {
@@ -1302,9 +1416,15 @@ function runSelfCheck(apply: boolean): FixItem[] {
 		});
 	else out.push({ id: "ctx", level: "ok", detail: t("fix.ctxOk") });
 
-	// 8) 光晕特效样式关着、但逐路径范围还留着旧值（老存档会这样，滑杆已隐藏 → 说不清）
+	// 8) 光晕特效样式关着、但逐路径范围还留着旧值（老存档会这样，滑杆已隐藏 → 说不清）。
+	//    glowStyle 现已逐路径：全局 off 或单条路径覆盖 off，只要对应路径 range>0 都算异常
 	const glowRanges = surf.pathNums.ballGlowRange ?? [];
-	if (surf.ballGlowStyle === "off" && glowRanges.some((v) => (v ?? 0) > 0))
+	const glowStyles = surf.pathStrs.ballGlowStyle ?? [];
+	let glowBad = surf.ballGlowStyle === "off" && glowRanges.some((v) => (v ?? 0) > 0);
+	for (let i = 0; i < glowStyles.length && !glowBad; i++) {
+		if (glowStyles[i] === "off" && (glowRanges[i] ?? 0) > 0) glowBad = true;
+	}
+	if (glowBad)
 		out.push({
 			id: "glow",
 			level: "manual",
@@ -1368,6 +1488,26 @@ function runSelfCheck(apply: boolean): FixItem[] {
 		}
 	}
 
+	// 11) 时间轴一致性：time 是否随画面 x 单调（残余音符 / 轨迹断裂的根因）。
+	//     regressions 是硬不变量（绑定末尾 enforce 后必须为 0，运行时不改 .time）；
+	//     diverged / longEdges 在变速谱里可能天然 >0（x 与 time 非线性），只作信息展示。
+	//     无论是否异常都留一个「重算」按钮给用户手动兜底（该问题难以一次性根除）。
+	{
+		const d = diagnoseTimeline();
+		const bad = d.regressions > 0;
+		if (bad && apply) recomputeTimeline();
+		const info = `倒退 ${d.regressions} · 偏离 ${d.diverged} · 长跨度边 ${d.longEdges}`;
+		out.push({
+			id: "timeline",
+			level: bad ? (apply ? "auto" : "fixable") : "ok",
+			detail:
+				(bad ? (apply ? t("fix.timelineRepaired") : t("fix.timelineFound")) : t("fix.timelineOk")) +
+				`（${info}）`,
+			fixLabel: t("fix.timelineReload"),
+			fix: recomputeTimeline,
+		});
+	}
+
 	return out;
 }
 
@@ -1425,7 +1565,7 @@ function paintFixDiag(): void {
 	fixDiagEl.textContent = [
 		`${t("fix.diag.geo")} ${i.memory.geometries} · ${t("fix.diag.tex")} ${i.memory.textures} · ${t("fix.diag.prog")} ${i.programs?.length ?? 0}`,
 		`${t("fix.diag.calls")} ${i.render.calls} · ${t("fix.diag.tris")} ${i.render.triangles.toLocaleString()}`,
-		`${t("fix.diag.elems")} ${allElems.length} · ${t("fix.diag.tracks")} ${ballTracks.length} · ${t("fix.diag.ties")} ${tieLights.length}`,
+		`${t("fix.diag.elems")} ${allElems.length} · ${t("fix.diag.tracks")} ${ballTracks.length} · ${t("fix.diag.ties")} ${elemLights.length}`,
 		`${t("fix.diag.stage")} ${stage.children.length}/${stageBuiltCount} · ${t("fix.diag.frame")} ${lastFrameAt ? ((performance.now() - lastFrameAt) / 1000).toFixed(1) + "s" : "-"}`,
 		`${t("fix.diag.asm")} ${ASM_SLOTS.length - missingAsmSlots().length}/${ASM_SLOTS.length} · ${t("fix.diag.selects")} ${document.querySelectorAll(".sh-select").length}`,
 	].join("\n");
@@ -1563,7 +1703,7 @@ function refreshBuffersTier(): void {
 	applySurf({});
 	updateBallMaterials();
 	refreshLitColors();
-	refreshTieColors();
+	refreshElemColors();
 	applyViewCrop();
 	syncPanel();
 }
@@ -1572,6 +1712,7 @@ function refreshBallsTier(): void {
 	initBalls(); // 球池/光晕网格/分支状态整套重建
 	clearAllTrailHist(); // 拖尾历史留在旧轨迹上会拖出「幽灵线」
 	updateBalls(visTime);
+	relightToCurrent(); // 球轨重建后 litCount 停在旧值，按当前位置重点亮避免残余/漏亮
 }
 function rebuildSceneTier(): void {
 	if (!allElems.length) return;
@@ -1581,6 +1722,7 @@ function rebuildSceneTier(): void {
 		buildAll();
 		refreshLitColors();
 		updateBalls(visTime);
+		relightToCurrent(); // buildAll 会把 litCount 归零，场景重建后按当前位置重点亮
 		renderProg.done(t("p4.prog.geoDone"));
 		renderFixList(runSelfCheck(false));
 	});
@@ -1760,6 +1902,45 @@ function syncPanel(): void {
 	refreshSliderFill(rySlide);
 	refreshSliderFill(rzSlide);
 	readFreePoseToPanel(); // 自由相机：xyz + 三角度随时跟着真实位姿回填（面板没开就直接返回）
+	saveCamPrefs(); // 视角变了 → 防抖落盘（拖拽/播放跟随的高频调用由防抖合并）
+}
+let camSaveTimer = 0;
+/** 相机设置防抖落盘（800ms）：播放跟随/拖拽会高频经过 syncPanel，静止后才真正写。
+ *  保存的是用户停手那一刻的视角（含焦点），刷新/重开/工程导入后原样回来。 */
+function saveCamPrefs(): void {
+	window.clearTimeout(camSaveTimer);
+	camSaveTimer = window.setTimeout(() => {
+		const e = new THREE.Euler().setFromQuaternion(camera.quaternion, "YXZ");
+		const pose: CamPrefs = {
+			mode: camMode,
+			focus: focusX,
+			r: radius,
+			rx: rotX,
+			ry: rotY,
+			rz: rotZ,
+			tol: camCenterTol,
+			off: camCenterOffset,
+			free:
+				camMode === "free"
+					? {
+							x: camera.position.x,
+							y: camera.position.y,
+							z: camera.position.z,
+							yaw: rad2deg(e.y),
+							// 与面板同口径：three 的 +X 抬头，存「正=俯视」的取反值
+							pitch: -rad2deg(e.x),
+							roll: rad2deg(e.z),
+							touched: freeTouched,
+						}
+					: null,
+		};
+		try {
+			if (BENCH) return; // 测试台绝不写用户真实存档
+			localStorage.setItem(CAM_KEY, JSON.stringify(pose));
+		} catch {
+			/* 隐私模式忽略 */
+		}
+	}, 800);
 }
 /** 统一焦点入口：只改相机（全量构建，无需 LOD 跟随）；播放中手动改 → 同步音频 seek */
 function setFocusX(v: number, fromPlay = false): void {
@@ -1834,11 +2015,17 @@ function disposeMaterialOnly(
 	for (const m of arr) m.dispose();
 }
 
-/** 某对象当前配置 + 物理调参 → 材质构造覆盖（粗糙度/金属度/玻璃不透明度/颜色着色） */
-function overridesFor(obj: "score" | "ground" | "ball"): MatOverrides {
+/** 某对象当前配置 + 物理调参 → 材质构造覆盖（粗糙度/金属度/玻璃不透明度/颜色着色）。
+ *  ball 的 rough/metal 支持逐路径：传 pathIdx 时取该路径覆盖值，缺省回落全局。 */
+function overridesFor(
+	obj: "score" | "ground" | "ball",
+	pathIdx = -1,
+): MatOverrides {
 	const tune = surf.matTune[obj];
 	const cfg = surf.mat[obj];
-	const ov: MatOverrides = { roughness: tune.rough, metalness: tune.metal };
+	const rough = obj === "ball" ? effNum("ballRough", pathIdx) : tune.rough;
+	const metal = obj === "ball" ? effNum("ballMetal", pathIdx) : tune.metal;
+	const ov: MatOverrides = { roughness: rough, metalness: metal };
 	if (isGlassPreset(cfg.preset)) ov.opacity = tune.trans;
 	return ov;
 }
@@ -1863,13 +2050,41 @@ function pathColorFor(pathIdx: number, fallbackChannel = 0): number {
 function cfgBallColor(track: number, pathIdx = -1): number {
 	return pathIdx >= 0 ? pathColorFor(pathIdx) : track;
 }
-/**
- * 逐路径数值：路径覆盖优先，没单独设过就吃全局默认。
- * 面板上选中多条路径且取值不一致时，滑轨旁的输入框显示「多值」。
- */
+/** 逐路径数值的全局回落值：rough/metal/trailPct 不在 surf 顶层，单独映射；
+ *  其余 7 项直接取 surf 同名字段。 */
+function globalNumVal(key: PathNumKey): number {
+	switch (key) {
+		case "ballRough":
+			return surf.matTune.ball.rough;
+		case "ballMetal":
+			return surf.matTune.ball.metal;
+		case "trailPct":
+			return surf.trailPct;
+		default:
+			return (surf as unknown as Record<PathNumKey, number>)[key];
+	}
+}
+/** 逐路径数值：路径覆盖优先，没单独设过就吃全局默认。
+ *  面板上选中多条路径且取值不一致时，滑轨旁的输入框显示「多值」。 */
 function effNum(key: PathNumKey, pathIdx: number): number {
 	const v = pathIdx >= 0 ? surf.pathNums[key]?.[pathIdx] : undefined;
-	return v ?? (surf as unknown as Record<PathNumKey, number>)[key];
+	return v ?? globalNumVal(key);
+}
+function globalStrVal(key: PathStrKey): string {
+	return key === "ballPreset" ? surf.mat.ball.preset : surf.ballGlowStyle;
+}
+/** 逐路径字符串：材质预设 / 光晕样式 */
+function effStr(key: PathStrKey, pathIdx: number): string {
+	const v = pathIdx >= 0 ? surf.pathStrs[key]?.[pathIdx] : undefined;
+	return v ?? globalStrVal(key);
+}
+function globalBoolVal(key: PathBoolKey): boolean {
+	return key === "hitFx" ? surf.hitFx : false;
+}
+/** 逐路径布尔：撞击粒子 */
+function effBool(key: PathBoolKey, pathIdx: number): boolean {
+	const v = pathIdx >= 0 ? surf.pathBools[key]?.[pathIdx] : undefined;
+	return v ?? globalBoolVal(key);
 }
 /** 某条路径的小球半径（= 倍数 × 一个谱线间距，贴在谱面上不随谱面缩放漂） */
 function ballRadiusOf(pathIdx: number): number {
@@ -1927,10 +2142,10 @@ function updateBallMaterials(): void {
 		const ballColor = cfgBallColor(bt.color, bt.pathIdx); // 路径自定义色优先
 		const bright = effNum("brightBall", bt.pathIdx); // 小球亮度逐路径一份
 		const mat = makeBallMaterial(
-			cfg.preset,
+			effStr("ballPreset", bt.pathIdx) as AnyPreset,
 			ballColor,
 			bright,
-			overridesFor("ball"),
+			overridesFor("ball", bt.pathIdx),
 		);
 		applyBallBrightness(mat, ballColor, bright);
 		bt.glow = rebuildTrackGlow(bt, ballColor);
@@ -2121,6 +2336,12 @@ function applySurf(patch: Partial<SurfSettings>): void {
 		updateBallMaterials();
 		refreshLitColors();
 	}
+	// 逐路径字符串变了：ballPreset → 重建球材质；ballGlowStyle → 重建球轨（光晕网格）
+	if (patch.pathStrs !== undefined) {
+		const sk = Object.keys(patch.pathStrs);
+		if (sk.includes("ballPreset")) updateBallMaterials();
+		if (sk.includes("ballGlowStyle") && ballTracks.length) initBalls();
+	}
 
 	// ── 运动 · 拖尾 ──（meshline 丝带：宽度/透明度每帧读 surf，无须在此处理）
 	if (patch.trailFollowBall !== undefined || patch.trailColor !== undefined)
@@ -2133,12 +2354,23 @@ function applySurf(patch: Partial<SurfSettings>): void {
 		patch.litColor !== undefined
 	) {
 		refreshLitColors();
-		refreshTieColors();
+		refreshElemColors();
+	}
+	// ── 元素点亮三档：连音线/圆滑线/指法/和弦标记/歌词 ──
+	// 任一变化 → 按当前位置重点亮（overlay 的流式/逐块/关闭在 updateElemLights 统一判定）
+	if (
+		patch.litTie !== undefined ||
+		patch.litSlur !== undefined ||
+		patch.litFingering !== undefined ||
+		patch.litChordMark !== undefined ||
+		patch.litLyric !== undefined
+	) {
+		relightToCurrent();
 	}
 	if (patch.pathColors !== undefined) {
 		updateBallMaterials(); // 小球表面色
 		refreshLitColors(); // 已点亮的符头
-		refreshTieColors(); // 连音线点亮色跟随路径
+		refreshElemColors(); // 连音线点亮色跟随路径
 		publishPathColors(); // 跟随下拉里的「路径N」
 	}
 
@@ -2183,7 +2415,7 @@ function applySurf(patch: Partial<SurfSettings>): void {
 			for (const m of targetMeshes.get(i) ?? [])
 				(m.material as THREE.MeshStandardMaterial).emissiveIntensity = e;
 		}
-		refreshTieColors(); // 连音线点亮亮度同步
+		refreshElemColors(); // 连音线点亮亮度同步
 	}
 	// 乐谱本身（谱线/符干/符号 + 未点亮符头）自发光：白色自发光，0=不发光靠漫反射。
 	// 未点亮符头是独立材质实例，必须一起同步，否则谱线亮了符头还是暗的（半截乐谱发光）。
@@ -2269,9 +2501,16 @@ function updateObjectMaterialParams(obj: "score" | "ground" | "ball"): void {
 			// 光晕颜色烘焙在材质里：仅颜色变化时才重建（避免滑杆高频重建）
 			if (bt.glow.userData.color !== c) bt.glow = rebuildTrackGlow(bt, c);
 			bt.light.color.setHex(c); // 小球灯也吃路径色：白灯会把谱面洗白
+			const rough = effNum("ballRough", bt.pathIdx);
+			const metal = effNum("ballMetal", bt.pathIdx);
 			for (const b of bt.pool) {
 				const m = b.material as THREE.MeshStandardMaterial;
-				patchOne(m);
+				m.roughness = rough;
+				m.metalness = metal;
+				if (glass) {
+					m.opacity = tune.trans;
+					m.transparent = true;
+				}
 				m.color.setHex(c);
 				if (m.emissive) m.emissive.setHex(c);
 				m.needsUpdate = true;
@@ -2294,7 +2533,7 @@ function updateObjectMaterialParams(obj: "score" | "ground" | "ball"): void {
 		}
 	}
 	// 连音线 overlay 与乐谱同质感：粗糙度/金属度/玻璃透明度一起跟
-	for (const tl of tieLights) patchOne(tl.mat);
+	for (const tl of elemLights) patchOne(tl.mat);
 	refreshTextPlanes(); // 文字块（CJK 回退）同步纸色/墨色 + PBR
 }
 
@@ -2406,9 +2645,9 @@ function rebuildObjectMaterial(
 }
 
 /** 连音线 overlay 材质按新预设重建（保留当前点亮色/亮度）；score 预设结构变化时调用。
- *  着色器随新材质下次渲染重新编译，点亮前沿 uniform 由 updateTieLights 每帧重写。 */
+ *  着色器随新材质下次渲染重新编译，点亮前沿 uniform 由 updateElemLights 每帧重写。 */
 function rebuildTieMaterials(): void {
-	for (const tl of tieLights) {
+	for (const tl of elemLights) {
 		const color = tl.mat.color.getHex();
 		const glow = tl.mat.emissiveIntensity;
 		const old = tl.mat;
@@ -4387,9 +4626,10 @@ function publishPathColors(): void {
 }
 const targetMeshes = new Map<number, THREE.Mesh[]>(); // targetIdx → 它的所有 mesh（notehead/artic 等）
 let litCount = 0; // 已点亮数量（递增/递减增量更新）
-
 /** 播放进度 → 点亮状态（二分定位边界，只改变化的区间） */
 function setLitProgress(t: number): void {
+	// DIAG-TEMP 诊断锁定点亮数时跳过每帧重置，定位后删除
+	if ((globalThis as unknown as { __diagLitLock?: boolean }).__diagLitLock) return;
 	let k = 0;
 	while (k < playTargets.length && playTargets[k]!.time <= t) k++;
 	if (k === litCount) return;
@@ -4401,9 +4641,10 @@ function setLitProgress(t: number): void {
 			const mm = m.material as THREE.MeshStandardMaterial;
 			if (on) {
 				const color = litColorFor(i);
+				const b = litBrightFor(i);
 				mm.color.setHex(color);
 				mm.emissive.setHex(color);
-				mm.emissiveIntensity = litBrightFor(i);
+				mm.emissiveIntensity = b;
 			} else {
 				// 未点亮：跟随乐谱整体材质/颜色/自发光
 				mm.color.copy(inkMat.color);
@@ -4415,6 +4656,8 @@ function setLitProgress(t: number): void {
 	litCount = k;
 }
 function resetLit(): void {
+	// DIAG-TEMP 诊断锁定点亮数时跳过，定位后删除
+	if ((globalThis as unknown as { __diagLitLock?: boolean }).__diagLitLock) return;
 	for (const [, list] of targetMeshes) {
 		for (const m of list) {
 			const mm = m.material as THREE.MeshStandardMaterial;
@@ -4423,7 +4666,7 @@ function resetLit(): void {
 			mm.emissiveIntensity = inkMat.emissiveIntensity;
 		}
 	}
-	for (const tl of tieLights) {
+	for (const tl of elemLights) {
 		tl.overlay.visible = false;
 		const sh = tl.mat.userData.shader as
 			| { uniforms: { uLitX: { value: number } } }
@@ -4432,6 +4675,164 @@ function resetLit(): void {
 	}
 	litCount = 0;
 }
+
+// ── 时间轴一致性：time 必须随画面 x 单调（残余音符 / 轨迹断裂的结构性根因） ──
+// tie 延音延续音、装饰音、边界符头从 Verovio timemap 拿到的是「起音时间」，与画面 x
+// 位置不符 → setLitProgress 在画面到达前点亮（残余），球轨段 ta/tb 错位（轨迹在某音
+// 终止、下个音才续接）。interp 兜底只修 >1s 的大错位，亚阈值倒退会 relocation 到新位置
+// （如 0:04–0:05）。这里在绑定末尾做一次全局单调化保证，并提供手动重算入口兜底。
+
+/** 按画面 x（次按 y）排序的 playTargets 下标 */
+function playTargetOrderByX(): number[] {
+	return playTargets
+		.map((_, i) => i)
+		.sort((a, b) => playTargets[a]!.x - playTargets[b]!.x || playTargets[a]!.y - playTargets[b]!.y);
+}
+
+interface TimelineDiag {
+	regressions: number; // 按 x 排序后 time 倒退的相邻对数
+	diverged: number; // |time − x 线性估计| > 1s 的音符数
+	longEdges: number; // 球轨段时间跨度 > 2s 的边数（错位端点产生）
+}
+
+/** 检测当前时间轴一致性（给扫描面板用；ballTracks 尚未构建时 longEdges=0） */
+function diagnoseTimeline(): TimelineDiag {
+	const order = playTargetOrderByX();
+	let regressions = 0;
+	for (let i = 1; i < order.length; i++) {
+		if (playTargets[order[i]!]!.time < playTargets[order[i - 1]!]!.time - 1e-9) regressions++;
+	}
+	let diverged = 0;
+	if (order.length > 1) {
+		const a = playTargets[order[0]!]!;
+		const b = playTargets[order[order.length - 1]!]!;
+		const span = b.x - a.x;
+		if (span > 1e-6) {
+			for (const idx of order) {
+				const pt = playTargets[idx]!;
+				const est = ((pt.x - a.x) / span) * b.time;
+				if (Math.abs(pt.time - est) > 1) diverged++;
+			}
+		}
+	}
+	let longEdges = 0;
+	for (const bt of ballTracks) {
+		for (const s of bt.segs) {
+			if (s.kind === "edge" && s.tb - s.ta > 2) longEdges++;
+		}
+	}
+	return { regressions, diverged, longEdges };
+}
+
+/**
+ * 全局时间轴修复：保证 playTarget.time 随画面 x 单调不下降，且沿 x 的推进速度有界。
+ * - trusted（MIDI 对齐命中）的音符是锚点，本身已随 x 单调（alignHeadsToEvents 单调对齐）；
+ * - 未命中的符头（timemap/线性兜底）若相对前一个 x 更大的音符时间倒退，则被推到
+ *   「前一时间 + 最小步长」；同 x（和弦）允许相等但不许倒退。
+ * - 密度下界（本函数的关键修复）：timemap 可能把一段音符的时间压成亚毫秒间隔，
+ *   使小球在 0.03s 内瞬移过数个画面单位 → 相机（带居中容忍度）跟不上 → 播放头未到、
+ *   音符先亮（残余）；同时球轨段近零时长 → 轨迹看似断裂。这里以全曲线性密度
+ *   dur/trackLength 为基准，允许 MAX_SPEED_MULT 倍的局部节奏，超过就把未命中音符的
+ *   时间向后拉到「前一时间 + dx·基准密度/倍速」，保证球速有界、相机跟得上、点亮与镜头一致。
+ * 最小步长极小（亚毫秒），只用于消除球轨零时长段与点亮顺序歧义，不改变可感知节奏。
+ * 返回被推进的音符数。
+ */
+function enforceTimelineMonotonic(trustedIds: Set<string>, durHint = 0): number {
+	const order = playTargetOrderByX();
+	const trusted: number[] = [];
+	for (const idx of order) {
+		const pt = playTargets[idx]!;
+		if (pt.id != null && trustedIds.has(pt.id)) trusted.push(pt.time);
+	}
+	let tEps = 1e-4;
+	if (trusted.length > 1) {
+		const avg = (trusted[trusted.length - 1]! - trusted[0]!) / (trusted.length - 1);
+		tEps = Math.max(1e-4, avg * 0.001);
+	}
+	// 小球沿 x 的最大速度 = MAX_SPEED_MULT × 全曲线性速度（trackLength/dur）。
+	// 等价于相邻音符的时间间隔不得小于 dx × (dur/trackLength) / MAX_SPEED_MULT。
+	// 时长必须取绑定时就就绪的数据源：boot 里 bindTargetTimes（renderScore 内）先于
+	// initPlayer 执行，此刻 player 还是 null，读 player.duration 恒为 0 → 密度分支
+	// 整段跳过 → 修复变 no-op（"问题依旧"的根因）。优先用调用方传入的 dur（bindTargetTimes
+	// 已从 playEvents 算出），其次自己从 playEvents 重算，最后才回退 player.duration。
+	const evDur = playEvents.length
+		? Math.max(...playEvents.map((e) => e.time + e.dur))
+		: 0;
+	const dur = durHint > 0 ? durHint : evDur > 0 ? evDur : player?.duration ?? 0;
+	const refDensity = dur > 0 && trackLength > 0 ? dur / trackLength : 0;
+	const MAX_SPEED_MULT = 2.5;
+	const minDtPerX = refDensity > 0 ? refDensity / MAX_SPEED_MULT : 0;
+	let repaired = 0;
+	let prevX = -Infinity;
+	let prevT = -Infinity;
+	for (const idx of order) {
+		const pt = playTargets[idx]!;
+		const isTrusted = pt.id != null && trustedIds.has(pt.id);
+		let t = pt.time;
+		if (pt.x > prevX + 1e-9) {
+			const dx = pt.x - prevX;
+			let minT = prevT + tEps;
+			if (!isTrusted && minDtPerX > 0) minT = Math.max(minT, prevT + dx * minDtPerX);
+			if (t < minT - 1e-9) {
+				t = minT;
+				if (!isTrusted) repaired++;
+			}
+		} else if (t < prevT - 1e-9) {
+			// 同 x（和弦/同音叠置）：允许相等，但不许倒退
+			t = prevT;
+			if (!isTrusted) repaired++;
+		}
+		pt.time = t;
+		prevX = pt.x;
+		prevT = t;
+	}
+	return repaired;
+}
+
+/** 按当前播放位置重点亮 + 重摆球位（重建 / seek / 后台切回后清残余） */
+function relightToCurrent(): void {
+	const dur = player?.duration ?? 0;
+	const vt = visTime >= 0 ? visTime : 0;
+	resetLit();
+	setLitProgress(dur > 0 ? Math.min(vt, dur) : 0);
+	updateBalls(vt);
+	updateElemLights(vt);
+}
+
+/** 手动重算时间轴兜底：重新绑定 + 单调化修复 + 重建球轨 + 按当前位置重点亮。
+ *  供「工具 → 修复 → 扫描」发现时间轴不一致时一键修复，也在场景重建后自动触发。 */
+function recomputeTimeline(): void {
+	if (!playTargets.length) return;
+	bindTargetTimes(); // 内部末尾会跑 enforceTimelineMonotonic
+	targetsByX = playTargetOrderByX();
+	if (ballTracks.length) initBalls(); // 用修正后的 time 重建球轨段（ta/tb）
+	clearAllTrailHist();
+	relightToCurrent();
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /** target ↔ 演奏事件关联：
  *  1) 每个符头绑到它自己的 MIDI 事件秒（时间唯一权威 = MIDI，见 score/midiEvents）；
@@ -4470,6 +4871,9 @@ function bindTargetTimes(): void {
 					)
 				: [];
 	} else corrAnchors = [];
+	// trustedIds：被 MIDI 对齐命中的符头（time 可信，且与画面 x 单调）。timemap 兜底
+	// 只补未命中的，下面用这些锚点把「时间与画面位置严重不符」的符头拉回正轨。
+	const trustedIds = new Set(headTime.keys());
 	// timemap 兜底/补齐：只为 MIDI 没覆盖的符头（tie 延续/装饰音，它们的 g.note
 	// 也是 playTarget）补时间，不覆盖已绑定的
 	if (playTargets.some((t) => !t.id || !headTime.has(t.id)) && vtk) {
@@ -4483,14 +4887,47 @@ function bindTargetTimes(): void {
 			/* timemap 不可用 → 未覆盖符头走线性兜底 */
 		}
 	}
+	// 画面一致性兜底：timemap 给 tie 延续/装饰音的是「起音时间」，长延音跨小节时会
+	// 远早于该符头的画面 x 位置（如 x=49 却拿到 37s）。后果是球轨段 ta/tb 错位、轨迹
+	// 在某音终止后从下下个音才续接，且 setLitProgress 在画面到达前就点亮（残余音符）。
+	// 对未被 MIDI 命中的符头，若 timemap/线性给的时间与「按 x 在可信邻居间插值」的
+	// 画面时间差超过 1s，改用插值时间——保证 time 随 x 单调，视觉与轨迹都连续。
+	const anchorPts = playTargets
+		.filter((t) => t.id && trustedIds.has(t.id))
+		.map((t) => ({ x: t.x, t: headTime.get(t.id!)! }))
+		.sort((a, b) => a.x - b.x);
+	const interpTimeAtX = (x: number): number => {
+		if (!anchorPts.length) return Number.NaN;
+		if (x <= anchorPts[0]!.x) return anchorPts[0]!.t;
+		const last = anchorPts[anchorPts.length - 1]!;
+		if (x >= last.x) return last.t;
+		let lo = 0,
+			hi = anchorPts.length - 1;
+		while (lo + 1 < hi) {
+			const mid = (lo + hi) >> 1;
+			if (anchorPts[mid]!.x <= x) lo = mid;
+			else hi = mid;
+		}
+		const a = anchorPts[lo]!,
+			b = anchorPts[hi]!;
+		const span = b.x - a.x;
+		return span <= 1e-6 ? a.t : a.t + ((x - a.x) / span) * (b.t - a.t);
+	};
 	const dur = playEvents.length
 		? Math.max(...playEvents.map((e) => e.time + e.dur))
 		: 0;
 	const fallbackDur = dur > 0 ? dur : trackLength / 1.5;
 	for (const t of playTargets) {
-		const hit = t.id ? headTime.get(t.id) : undefined;
+		let hit = t.id ? headTime.get(t.id) : undefined;
+		if (hit !== undefined && t.id && !trustedIds.has(t.id)) {
+			const et = interpTimeAtX(t.x);
+			if (!Number.isNaN(et) && Math.abs(hit - et) > 1) hit = et;
+		}
 		t.time = hit !== undefined ? hit : (t.x / Math.max(1e-6, trackLength)) * fallbackDur;
 	}
+	// 全局兜底：无论 timemap / 线性给了什么，最终保证 time 随画面 x 单调——
+	// 这是「残余音符 / 轨迹断裂」的结构性根因，亚阈值错位（如 0:04–0:05）也一并消除
+	enforceTimelineMonotonic(trustedIds, dur);
 	// time 升序；同 time 按 y 升序（高音谱表在上）
 	playTargets.sort((a, b) => a.time - b.time || a.y - b.y);
 	// 同 time 桶内按序绑定 channel（events 原始轨序 = staff 顺序，与 y 顺序对应）
@@ -4574,11 +5011,12 @@ function litColorFor(i: number): number {
 function refreshLitColors(): void {
 	for (let i = 0; i < litCount; i++) {
 		const color = litColorFor(i);
+		const b = litBrightFor(i);
 		for (const m of targetMeshes.get(i) ?? []) {
 			const mm = m.material as THREE.MeshStandardMaterial;
 			mm.color.setHex(color);
 			mm.emissive.setHex(color);
-			mm.emissiveIntensity = litBrightFor(i);
+			mm.emissiveIntensity = b;
 		}
 	}
 }
@@ -4587,7 +5025,8 @@ function applyLitTheme(key: string): void {
 	const th = LIT_THEMES[key] ?? LIT_THEMES.Dark!;
 	// 主题不再维护第二张色表：直接把各路径重配成这套色，仍然只有 pathColors 一个来源
 	surf.pathColors = surf.pathNames.map((_, i) => th[i % th.length]!);
-	refreshLitColors();
+	refreshLitColors(); // 符头
+	refreshElemColors(); // 连音线/圆滑线/指法/和弦标记/歌词 overlay（漏刷会让它们停在旧主题色，与符头不一致）
 	publishPathColors();
 }
 
@@ -5082,7 +5521,6 @@ let prevTrailT: number | null = null;
 
 /** 每帧：记录可见球的历史位置，按当前拖尾时长重画水滴管道（照搬测试页逻辑） */
 function updateTrails(time: number, active: boolean, frozen = false): void {
-	const sec = (surf.trailPct / 100) * TRAIL_REF_SEC; // 照搬测试页滑块：拖尾时长（0~2s，默认 0.8）
 	// 跳转/切歌 → 旧轨迹会横穿画面，直接清空
 	if (
 		prevTrailT !== null &&
@@ -5095,6 +5533,8 @@ function updateTrails(time: number, active: boolean, frozen = false): void {
 	// 原地保留（测试台暂停尾巴还在，主项目此前暂停态仍走老化路径 → 尾巴消失）
 	if (frozen) return;
 	for (const bt0 of ballTracks) {
+		// 拖尾时长逐路径一份（照搬测试页滑块：0~2s，默认 0.8）
+		const sec = (effNum("trailPct", bt0.pathIdx) / 100) * TRAIL_REF_SEC;
 		// 水滴头部半径 = 该路径的球半径（照搬测试台 headR=BALL_RADIUS*scale；大小逐路径一份）
 		const headR = ballRadiusOf(bt0.pathIdx);
 		for (let bi = 0; bi < bt0.pool.length; bi++) {
@@ -5164,6 +5604,7 @@ function updateTrails(time: number, active: boolean, frozen = false): void {
 	for (const bt0 of ballTracks) {
 		const sp = bt0.split;
 		if (!sp) continue;
+		const sec = (effNum("trailPct", bt0.pathIdx) / 100) * TRAIL_REF_SEC;
 		const headR = ballRadiusOf(bt0.pathIdx);
 		if (!active || sec <= 0.001) {
 			if (sp.histB.length) recycleHist(sp.histB);
@@ -5251,8 +5692,8 @@ function initFx(): void {
 
 /** 符头位置迸发一记彩色粒子（世界坐标）。默认关闭（surf.hitFx），
  *  「小球」页的「撞击音符特效」开着才建粒子系统。 */
-function spawnNoteHit(pos: THREE.Vector3, color: number): void {
-	if (!surf.hitFx) return;
+function spawnNoteHit(pos: THREE.Vector3, color: number, pathIdx: number): void {
+	if (!effBool("hitFx", pathIdx)) return;
 	if (!fxRenderer) initFx();
 	const col = new THREE.Color(color);
 	const ps = new ParticleSystem({
@@ -5859,23 +6300,32 @@ function ensureBallGeo(): THREE.SphereGeometry {
 }
 /** 每轨球光晕（three-glow-mesh）：包裹球的菲涅尔外壳，颜色随轨道色 */
 const trackGlows: THREE.Mesh[] = [];
+// 光晕范围强度映射基准：默认 ballGlowRange=0.08 对应满强度（保持原视觉），
+// 拖到 0 → 强度 0（无光晕），拖大 → 线性增强（上限 2×）。此前 size 只改外扩几何、
+// 强度恒定，导致拖到 0 菲涅尔亮边还在、范围调节看不出明显变化。
+const GLOW_RANGE_REF = 0.08;
 function createTrackGlow(color: number, pathIdx: number): THREE.Mesh {
+	const glowStyle = effStr("ballGlowStyle", pathIdx);
 	const style =
-		surf.ballGlowStyle === "halo"
+		glowStyle === "halo"
 			? { coefficient: 2.2, power: 3.6 }
 			: { coefficient: 1.1, power: 2.6 };
+	const range = effNum("ballGlowRange", pathIdx);
+	const intensity = Math.min(2, Math.max(0, range / GLOW_RANGE_REF));
 	const mesh = createGlowMesh(
 		ensureBallGeo().clone(),
 		{
 			backside: true,
 			coefficient: style.coefficient,
 			color: `#${color.toString(16).padStart(6, "0")}`,
-			size: effNum("ballGlowRange", pathIdx), // 光晕范围逐路径一份
+			size: range, // 光晕范围逐路径一份
 			power: style.power,
+			intensity,
 		} as never,
 	);
 	mesh.userData.color = color;
-	mesh.visible = surf.ballGlowStyle !== "off";
+	// 样式关或范围归零 → 整轨不显示光晕（range=0 时外壳退化成球本身，菲涅尔边还会亮，必须显式隐藏）
+	mesh.visible = glowStyle !== "off" && range > 1e-4;
 	mesh.frustumCulled = false;
 	scene.add(mesh);
 	trackGlows.push(mesh);
@@ -5936,7 +6386,6 @@ function initBalls(): void {
 
 	const linkTracks = loadLinkTracks();
 	if (!linkTracks.length) return; // 第四页连线还没保存，不画球
-	refreshTieColors(); // loadLinkTracks 已填好 targetPath，连音线点亮色此刻才能跟对路径
 
 	// 一条轨迹线（trackArc）：默认跟随轨道色，关闭“跟随轨道色”后用自定义颜色
 	const makeTrackLine = (
@@ -5990,10 +6439,10 @@ function initBalls(): void {
 			makeTrackLine(s, c, Math.min(s.ax, s.bx), Math.max(s.ax, s.bx));
 		}
 		const mat = makeBallMaterial(
-			surf.mat.ball.preset,
+			effStr("ballPreset", pi) as AnyPreset,
 			cfgBallColor(c, pi), // 路径自定义色优先
 			effNum("brightBall", pi), // 小球亮度逐路径一份
-			overridesFor("ball"),
+			overridesFor("ball", pi),
 		);
 		// 共享几何体半径固定，尺寸一律靠 scale → 每条路径可以各大各的
 		const scaleK = ballRadiusOf(pi) / BALL_GEO_R;
@@ -6095,6 +6544,9 @@ function initBalls(): void {
 			}
 		}
 	}
+	// targetPath / targetPaths 此刻才填好（含同音连音线延续音挂回路径），连音线 / 符尾等
+	// 覆盖层点亮色必须在此之后取；放早了会拿到 Dark 主题兜底色（红蓝），与音符实际颜色不符。
+	refreshElemColors();
 
 	// 起点线 / 终点线：loadLinkTracks 已把所有 head/tail 段归一到 MIDI 最早/最晚
 	// 发音符头位置（用户规则：不管前面空多少休止，只画一条起点/终点线），这里
@@ -6221,7 +6673,7 @@ function updateBalls(t: number): void {
 						BALL_Z + arcHeightAt(s.kind, 1, dist),
 						-s.by,
 					);
-					spawnNoteHit(_hitPos, cfgBallColor(bt.color, bt.pathIdx));
+					spawnNoteHit(_hitPos, cfgBallColor(bt.color, bt.pathIdx), bt.pathIdx);
 				}
 			}
 		}
@@ -6314,7 +6766,7 @@ function updateBalls(t: number): void {
 		let last: THREE.Mesh | null = null;
 		for (const b of bt.pool) if (b.visible) last = b;
 		const g = bt.glow;
-		if (surf.ballGlowStyle === "off" || !last) {
+		if (effStr("ballGlowStyle", bt.pathIdx) === "off" || !last) {
 			g.visible = false;
 		} else {
 			// 内部 (x,y,z) → 世界 (x, z, −y)：z 正向 = 凸起高度方向
@@ -6390,6 +6842,8 @@ function followToward(want: number, dt: number): void {
 	setFocusX(focusX + Math.sign(err) * excess * k, true);
 }
 function updateFollowFocus(linearX: number, rawDt: number, t = 0): void {
+	// DIAG-TEMP 诊断时禁用镜头跟随，让 focusX 可手动指定，定位后删除
+	if ((globalThis as unknown as { __diagNoFollow?: boolean }).__diagNoFollow) return;
 	const dt = Math.min(rawDt, 1 / 30); // 掉帧时别一帧跨到位
 	if (mainWin) {
 		// 镜头只跟主路径（用户要求）：起点线→首音那段待命在首音处，最后一个音之后
@@ -6970,18 +7424,32 @@ function makeTextPlane(el: MappedEl, r: number): THREE.Mesh {
 // 连音线在 Verovio SVG 里是 <g class="tie/slur"> 下的曲线（闭合填充透镜形或开放 stroke），
 // 与谱线/符干共用 inkMat，没有 noteId。给每条连音线叠一层「点亮 overlay」（克隆几何 +
 // 着色器前沿材质）：片元世界 x ≤ 前沿处发光，前沿按播放时间从曲线左端推到右端＝小球流式点亮。
-interface TieLight {
+/** 可点亮元素类别：连音线 / 圆滑线 / 指法 / 和弦标记 / 歌词 */
+type ElemCategory = "tie" | "slur" | "fingering" | "chordMark" | "lyric";
+interface ElemLight {
+	category: ElemCategory;
 	overlay: THREE.Mesh;
 	geo: THREE.BufferGeometry;
 	mat: THREE.MeshStandardMaterial;
-	x0: number;
+	x0: number; // 内部 x 区间（取 path 真实端点）
 	x1: number;
-	ai: number; // 曲线左端最近的演奏目标（取路径色/亮度）
-	bi: number; // 曲线右端最近的演奏目标（决定点亮结束时刻）
+	ai: number; // 最近的演奏目标（取路径色/亮度）
 	wx0: number; // 世界 x 区间：逐帧视野裁剪用（与 applyViewCrop 同一判据）
 	wx1: number;
 }
-let tieLights: TieLight[] = [];
+let elemLights: ElemLight[] = [];
+/** 元素类别 → 对应的 surf 三档设置字段 */
+function litModeKeyOf(c: ElemCategory): "litTie" | "litSlur" | "litFingering" | "litChordMark" | "litLyric" {
+	return c === "tie"
+		? "litTie"
+		: c === "slur"
+			? "litSlur"
+			: c === "fingering"
+				? "litFingering"
+				: c === "chordMark"
+					? "litChordMark"
+					: "litLyric";
+}
 /** playTargets 下标按内部 x 升序（x 只在 buildAll 变，time 随时可能被重新绑定） */
 let targetsByX: number[] = [];
 /** 内部 x → 演奏时间：按 x 排序的音符表插值，两端就近取常数。
@@ -7004,6 +7472,27 @@ function timeAtInternalX(x: number): number {
 	const pj = playTargets[targetsByX[lo]!]!;
 	const f = Math.min(1, Math.max(0, (x - pi.x) / Math.max(1e-6, pj.x - pi.x)));
 	return pi.time + (pj.time - pi.time) * f;
+}
+/** timeAtInternalX 的逆：给定播放时间 t，返回播放头在谱面的内部 x。
+ *  与小球一致——按 time 排序的相邻音符之间线性插值。跨多个音符的连音线若用
+ *  两端点 (t-ta)/(tb-ta) 局部线性推前沿 x，密度不均处会偏离真实播放位置
+ *  （光效跑到音符前面），改用播放头真实 x clamp 到 [x0,x1] 即可对齐。 */
+function internalXAtTime(t: number): number {
+	const n = playTargets.length;
+	if (!n) return 0;
+	if (t <= playTargets[0]!.time) return playTargets[0]!.x;
+	if (t >= playTargets[n - 1]!.time) return playTargets[n - 1]!.x;
+	let lo = 0;
+	let hi = n - 1;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (playTargets[mid]!.time < t) lo = mid + 1;
+		else hi = mid;
+	}
+	const pi = playTargets[lo - 1]!;
+	const pj = playTargets[lo]!;
+	const f = Math.min(1, Math.max(0, (t - pi.time) / Math.max(1e-6, pj.time - pi.time)));
+	return pi.x + (pj.x - pi.x) * f;
 }
 /** 连音线几何最左/最右顶点（内部坐标）。月牙形的 bbox 中心常落在两弧之间的空档，
  *  拿它去匹配音符会挑到别的轨 → 取色不对；曲线的真实端点才贴着头音/尾音。 */
@@ -7047,8 +7536,20 @@ function nearestTargetBy2D(x: number, y: number): number {
 	return best;
 }
 /** 连音线点亮色/亮度跟随路径（与符头点亮同源）；路径色/点亮设置变化时刷新 */
-function refreshTieColors(): void {
-	for (const tl of tieLights) {
+/** 判断元素属于哪一类可点亮元素，不属于返回 null。
+ *  Verovio SVG class（实测）：tie 连音线 / slur 圆滑线（曲线组），fing 指法、
+ *  harm 和弦标记（文本组），syl 歌词音节（在 verse 内，逐音节对应音符）。 */
+function elemCategoryOf(el: MappedEl): ElemCategory | null {
+	const g = el.el;
+	if (g.closest(".tie, .ties")) return "tie";
+	if (g.closest(".slur, .slurs")) return "slur";
+	if (g.closest(".fing, .fingering")) return "fingering";
+	if (g.closest(".harm, .harms")) return "chordMark";
+	if (g.closest(".syl, .lyric, .lyrics")) return "lyric";
+	return null;
+}
+function refreshElemColors(): void {
+	for (const tl of elemLights) {
 		const c = litColorFor(tl.ai);
 		tl.mat.color.setHex(c);
 		tl.mat.emissive.setHex(c);
@@ -7058,7 +7559,10 @@ function refreshTieColors(): void {
 /** 连音线点亮材质：片元世界 x ≤ 前沿 uLitX 处发光，前沿随播放时间从左端推到右端。
  *  Verovio 连音线是闭合填充透镜形（非开放 stroke），drawRange 无法干净地按 x 揭示，
  *  故用着色器前沿：未点亮区 alpha=0 透出底 mesh（inkMat 常态），点亮区显轨色+自发光。 */
-function makeTieMaterial(color: number, glow: number): THREE.MeshStandardMaterial {
+function makeTieMaterial(
+	color: number,
+	glow: number,
+): THREE.MeshStandardMaterial {
 	const mat = makeLitMaterial(
 		surf.mat.score.preset,
 		color,
@@ -7102,31 +7606,46 @@ function makeTieMaterial(color: number, glow: number): THREE.MeshStandardMateria
 /** 每帧按播放时间推进连音线点亮前沿（与符头点亮同一时钟；水平匀速后球 x∝时间）
  *  起止时刻一律现取现算，不缓存：反复展开、音画对齐、首尾留白都会重绑
  *  playTargets[].time，缓存过的 ta/tb 会留在旧时刻上（连音线点亮错位的根因）。 */
-function updateTieLights(t: number): void {
+function updateElemLights(t: number): void {
 	const r = Math.max(0.5, surf.viewRadius);
 	const lo = focusX - r;
 	const hi = focusX + r;
-	for (const tl of tieLights) {
-		const a = playTargets[tl.ai];
-		const b = playTargets[tl.bi];
-		// 取「音符时刻」与「按 x 内插的时刻」的包络：端点找不到对应音符（跨休止、
-		// 两端撞到同一个音）时也不会退化成 ta==tb —— 那会让线在开播瞬间整条全亮
-		const ta = Math.min(a ? a.time : Infinity, timeAtInternalX(tl.x0));
-		const tbRaw = Math.max(b ? b.time : -Infinity, timeAtInternalX(tl.x1));
-		const tb = tbRaw > ta ? tbRaw : ta + 1e-3;
-		const span = tb - ta;
-		const p = surf.litEnabled ? Math.min(1, Math.max(0, (t - ta) / span)) : 0;
-		const litX = p <= 0 ? -1e9 : (tl.x0 + (tl.x1 - tl.x0) * p) * SCORE_SCALE;
+	for (const el of elemLights) {
+		const mode: LitMode = surf.litEnabled ? surf[litModeKeyOf(el.category)] : "off";
+		if (mode === "off") {
+			el.overlay.visible = false;
+			continue;
+		}
+		// 起止时刻一律现取现算（timeAtInternalX 按 x 插值，bindTargetTimes 重绑后自动跟随）。
+		// 端点落在休止/找不到音符时也能插值出时间；tb 兜底避免 ta==tb 让线一开播整条全亮。
+		const ta = timeAtInternalX(el.x0);
+		const tb = Math.max(timeAtInternalX(el.x1), ta + 1e-3);
+		let p: number;
+		if (mode === "block") {
+			// 逐块：播放头经过元素左端时刻后，整块点亮（无渐变前沿），经过后保持亮
+			p = t >= ta ? 1 : 0;
+		} else {
+			// 流式：前沿 x 跟随播放头真实位置（与小球同一条 time→x 映射），clamp 到元素区间。
+			// 跨多音元素若用两端点 (t-ta)/span 线性推 x，密度不均处光效会跑到音符前面。
+			if (t <= ta) p = 0;
+			else if (t >= tb) p = 1;
+			else {
+				const headX = Math.min(el.x1, Math.max(el.x0, internalXAtTime(t)));
+				p = (headX - el.x0) / Math.max(1e-9, el.x1 - el.x0);
+			}
+		}
+		const litX = p <= 0 ? -1e9 : (el.x0 + (el.x1 - el.x0) * p) * SCORE_SCALE;
 		// 两个地方都写：已编译的走 uniform，首帧编译中的走 userData（见 makeTieMaterial）
-		tl.mat.userData.pendingLitX = litX;
-		const sh = tl.mat.userData.shader as
+		el.mat.userData.pendingLitX = litX;
+		const sh = el.mat.userData.shader as
 			| { uniforms: { uLitX: { value: number } } }
 			| undefined;
 		if (sh) sh.uniforms.uLitX.value = litX;
-		// visible 同时受「点亮进度」和「视野窗口」约束：只看前者的话，已点亮的线
+		// visible 同时受「点亮进度」和「视野窗口」约束：只看前者的话，已点亮的元素
 		// 会跑到裁剪线以外还赖在画面里，边缘就出现「别的都没了它还在」的分界
-		tl.overlay.visible = p > 0 && tl.wx1 >= lo && tl.wx0 <= hi;
+		el.overlay.visible = p > 0 && el.wx1 >= lo && el.wx0 <= hi;
 	}
+
 }
 function buildAll(): void {
 	recalcBallBaseZ(); // 凸起高度影响弧线落点/起终点线基准
@@ -7148,7 +7667,7 @@ function buildAll(): void {
 	fillCache.clear();
 	targetMeshes.clear();
 	litCount = 0;
-	tieLights = []; // overlay 已随上面的 stage 清空循环 dispose，这里只重置引用
+	elemLights = []; // overlay 已随上面的 stage 清空循环 dispose，这里只重置引用
 	// 连音线兜底用的 x→时间表：x 只在这里变（时刻由 bindTargetTimes 随时改，现取现算）
 	targetsByX = playTargets
 		.map((_, i) => i)
@@ -7226,23 +7745,20 @@ function buildAll(): void {
 					mesh.layers.enable(BLOOM_LAYER); // 符头进发光缓冲（未点亮=墨色，低于阈值）
 				}
 				stage.add(mesh);
-				// 连音线/圆滑线：叠一层流式点亮 overlay。Verovio 把 tie/slur 画成闭合填充
-				// 透镜形（kind=fill）或开放曲线（kind=open），两者都接住。底 mesh 仍是 inkMat
-				// 常态外观；overlay 克隆几何 + 着色器前沿材质，点亮前沿随小球推进（见 makeTieMaterial）。
-				if (
-					(el.kind === "open" || el.kind === "fill") &&
-					el.el.closest(".tie, .slur, .ties, .slurs")
-				) {
+				// 可点亮元素（连音线/圆滑线/指法/和弦标记/歌词）：叠一层点亮 overlay。
+				// 底 mesh 仍是 inkMat 常态外观（只控制点亮发光，不控制显示）；overlay 克隆几何 +
+				// 前沿材质，按 surf 三档（关闭/流式/逐块）在 updateElemLights 里推进。
+				const category = elemCategoryOf(el);
+				// 只给矢量 path（open/fill）叠点亮 overlay：第二页 <text> 进第三页前已被
+				// svgTextsToPaths 转成 path；剩 CJK 等无字形文本走贴图字块，无 path 可点亮，跳过。
+				if (category && (el.kind === "open" || el.kind === "fill")) {
 					const geo = mesh.geometry.clone();
-					// 端点取曲线几何的真实左右顶点（不是 bbox 边），2D 最近匹配音符，
-					// 这样连音线的取色一定来自它自己那条轨的头音
+					// x 区间与取色：取真实左右顶点（bbox 中心可能落在弧间空档导致取错轨）。
 					const ends = tieEndInternalPts(geo, mesh);
-					const ai = nearestTargetBy2D(ends.start.x, ends.start.y);
-					const bi = nearestTargetBy2D(ends.end.x, ends.end.y);
-					const mat = makeTieMaterial(0xffffff, 0.5);
-					// 前沿按曲线真实左右端点推进（不是 bbox 边），点亮正好铺满整条连音线
 					const x0 = Math.min(ends.start.x, ends.end.x);
 					const x1 = Math.max(ends.start.x, ends.end.x);
+					const ai = nearestTargetBy2D(ends.start.x, ends.start.y);
+					const mat = makeTieMaterial(0xffffff, 0.5);
 					const overlay = new THREE.Mesh(geo, mat);
 					overlay.position.copy(mesh.position);
 					overlay.frustumCulled = false;
@@ -7252,16 +7768,16 @@ function buildAll(): void {
 					overlay.layers.enable(BLOOM_LAYER);
 					overlay.visible = false;
 					stage.add(overlay);
-					tieLights.push({
+					elemLights.push({
+						category,
 						overlay,
 						geo,
 						mat,
 						x0,
 						x1,
 						// 取色端点钳到 0：playTargets 为空时 nearestTargetBy2D 返回 -1，
-						// refreshTieColors 的 litColorFor(-1) 会越界
+						// refreshElemColors 的 litColorFor(-1) 会越界
 						ai: Math.max(0, ai),
-						bi: Math.max(0, bi),
 						// 裁剪区间直接取 overlay 自己那份 userData，别留第二处真值
 						wx0: overlay.userData.worldX0 as number,
 						wx1: overlay.userData.worldX1 as number,
@@ -7350,7 +7866,9 @@ async function renderScore(name: string, xml: string): Promise<void> {
 	// 相机参数绑定谱宽
 	rMin = R_FACTOR_MIN * scoreH * SCORE_SCALE; // scoreH 是内部单位，相机在世界坐标里 → 同乘
 	rMax = R_FACTOR_MAX * scoreH * SCORE_SCALE;
-	radius = clamp(CAM_DEFAULT.r, rMin, rMax);
+	// 有相机存档时保留用户上次的视角高度（钳进本谱合法区间）；没存档才落预设。
+	// 无条件重置会把恢复值踩回默认，midee.cam3d 就永远「存得上、读不回」。
+	radius = camSaved ? clamp(radius, rMin, rMax) : clamp(CAM_DEFAULT.r, rMin, rMax);
 	shell.setTitle(name);
 	setInfo(
 		() =>
@@ -7633,7 +8151,10 @@ function resize(): void {
 window.addEventListener("resize", resize);
 // 从后台切回前台：节流期间的贴图/时钟/上下文都可能已经不一致，补扫一次
 document.addEventListener("visibilitychange", () => {
-	if (document.visibilityState === "visible") patrol("visible");
+	if (document.visibilityState === "visible") {
+		patrol("visible");
+		relightToCurrent(); // 后台 rAF 节流期间可能累积残余点亮，切回时按当前位置重点亮
+	}
 });
 // 顶栏/侧栏内缩（--sh-canvas-top / --sh-side-inset）变化时容器尺寸跟着变，
 // 不一定伴随 window resize，用 ResizeObserver 保证渲染器始终贴合可视区
@@ -7647,6 +8168,7 @@ let lastDriveT = -1; // 上一帧驱动给焦点/点亮的时间（非播放时�
 
 let lastAudioT = 0; // 上一帧的音频时钟读数（全站唯一时钟：平滑/水面/结束飞行增量全用它）
 let exportHold = false; // 导出期间挂起 animate 的场景更新与渲染，把 renderer 独占给逐帧循环
+let previewHold = false; // 导出弹窗预览期间挂起 animate：冻结场景，让预览渲染不与实时动画争抢
 /** 上一次 animate 真正跑起来的墙钟时刻（ms）：修复页签用它判断画面是不是冻住了 */
 let lastFrameAt = 0;
 let lastThrSyncAt = 0; // 上一次量发光缓冲峰值的时刻（peakLuma 不逐帧跑，见 animate）
@@ -7659,7 +8181,7 @@ function ensureLoop(): void {
 function animate(): void {
 	rafId = requestAnimationFrame(animate);
 	lastFrameAt = performance.now();
-	if (exportHold) return; // 视频导出期间挂起实时动画，renderer 交给逐帧导出循环独占
+	if (exportHold || previewHold) return; // 导出/预览期间挂起实时动画，renderer 交给导出或预览独占
 	const nowA = audioClockNow();
 	const dt = lastAudioT ? Math.min(0.05, Math.max(0, nowA - lastAudioT)) : 0.016;
 	lastAudioT = nowA;
@@ -7694,8 +8216,15 @@ function animate(): void {
 		visTime = toVisTime(p ? p.currentTime : 0);
 	}
 
+	// 大跳（长距离拖进度条 / ±10s / 后台时钟跳变）：点亮与拖尾从零重算，
+	// 避免增量更新在错位 / 旧状态上叠加出残余音符与幽灵拖尾
+	if (lastDriveT >= 0 && Math.abs(visTime - lastDriveT) > 1.5) {
+		clearAllTrailHist();
+		resetLit();
+	}
+
 	updateBalls(visTime);
-	updateTieLights(visTime); // 连音线随播放进度流式点亮（与小球同一时钟）
+	updateElemLights(visTime); // 连音线随播放进度流式点亮（与小球同一时钟）
 	// 照搬测试台暂停冻结：暂停/未播放且非结束态 → 拖尾原地保留（不采样不老化不裁剪），
 	// 与测试台 paused 尾巴还在一致；seek 大跳仍走 updateTrails 内的跳变清空
 	updateTrails(visTime, true, !playing && !ballEnded && p !== null);
@@ -7739,9 +8268,252 @@ function animate(): void {
 		syncBloomThreshold();
 	}
 	bloom.renderFrame();
+	// DIAG-TEMP 读渲染后画面各区域亮度，定位视野中心压暗，定位后删除
+	(globalThis as unknown as { __diagReadFrame?: () => void }).__diagReadFrame?.();
 	contrast.sample(); // 与 render 同帧读亮度，隔帧读到的会是空缓冲
 }
 animate();
+// DIAG-TEMP 画面亮度采样（renderFrame 后同帧 readPixels 有效）
+const __diagG = globalThis as unknown as {
+	__diagReadFrame?: () => void;
+	__diagFrameLum?: Record<string, unknown>;
+	__diagNoteLum?: { inLum: number[]; outLum: number[] };
+};
+__diagG.__diagFrameLum = {};
+__diagG.__diagReadFrame = () => {
+	try {
+		const gl = renderer.getContext() as WebGL2RenderingContext;
+		const cw = renderer.domElement.width;
+		const ch = renderer.domElement.height;
+		const rw = 80,
+			rh = 80;
+		const readAvg = (x: number, y: number, w = rw, h = rh): number => {
+			x = Math.max(0, Math.min(cw - w, Math.floor(x)));
+			y = Math.max(0, Math.min(ch - h, Math.floor(y)));
+			const buf = new Uint8Array(w * h * 4);
+			gl.readPixels(x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+			let s = 0;
+			for (let i = 0; i < buf.length; i += 4)
+				s += ((buf[i] ?? 0) + (buf[i + 1] ?? 0) + (buf[i + 2] ?? 0)) / 3;
+			return s / (w * h);
+		};
+		const cx = cw / 2,
+			cy = ch / 2;
+		const r = Math.max(0.5, surf.viewRadius);
+		const projPx = (ix: number): number => {
+			const v = new THREE.Vector3(ix * SCORE_SCALE, 0, 0).project(camera);
+			return (v.x * 0.5 + 0.5) * cw;
+		};
+		const scanN = 24;
+		const scan: number[] = [];
+		for (let k = 0; k < scanN; k++) {
+			const x = ((k + 0.5) / scanN) * cw;
+			scan.push(+readAvg(x - rw / 2, cy - rh / 2).toFixed(1));
+		}
+		__diagG.__diagFrameLum = {
+			center: readAvg(cx - rw / 2, cy - rh / 2),
+			left: readAvg(10, cy - rh / 2),
+			right: readAvg(cw - rw - 10, cy - rh / 2),
+			top: readAvg(cx - rw / 2, ch - rh - 10),
+			bottom: readAvg(cx - rw / 2, 10),
+			scan,
+			focusPx: +projPx(focusX).toFixed(0),
+			loPx: +projPx(focusX - r).toFixed(0),
+			hiPx: +projPx(focusX + r).toFixed(0),
+			cw,
+			ch,
+		};
+		// DIAG-TEMP 符头屏幕亮度采样（同帧 readPixels 有效），定位后删除
+		const inLum: number[] = [], outLum: number[] = [];
+		const lo2 = focusX - r, hi2 = focusX + r;
+		const vp = new THREE.Vector3();
+		for (let i = 0; i < litCount; i++) {
+			const list = targetMeshes.get(i);
+			if (!list || !list.length) continue;
+			const m = list[0]!;
+			const wx = m.userData.worldX0 ?? m.userData.worldX ?? m.position.x;
+			m.getWorldPosition(vp);
+			vp.project(camera);
+			if (vp.z >= 1) continue;
+			const sx = (vp.x * 0.5 + 0.5) * cw;
+			const sy = (vp.y * 0.5 + 0.5) * ch;
+			const lum = readAvg(sx - 12, sy - 12, 24, 24);
+			if (wx >= lo2 && wx <= hi2) inLum.push(lum);
+			else outLum.push(lum);
+		}
+		__diagG.__diagNoteLum = { inLum, outLum };
+	} catch {
+		/* ignore */
+	}
+};
+
+// DIAG-TEMP 视野内/外符头光效诊断：定位"视野内被压暗"根因，定位后删除
+(globalThis as { __diagLit?: () => unknown }).__diagLit = () => {
+	const r = Math.max(0.5, surf.viewRadius);
+	const lo = focusX - r;
+	const hi = focusX + r;
+	const buckets: { d: number; n: number; ei: number; vis: number; glow: number }[] = [];
+	for (let b = 0; b < 8; b++) buckets.push({ d: b, n: 0, ei: 0, vis: 0, glow: 0 });
+	let inViewLit = 0, outViewLit = 0, inViewEi = 0, outViewEi = 0;
+	for (let i = 0; i < litCount; i++) {
+		const meshes = targetMeshes.get(i);
+		if (!meshes || !meshes.length) continue;
+		const m = meshes[0]!;
+		const wx =
+			(m.userData.worldX0 as number | undefined) ??
+			(m.userData.worldX as number | undefined) ??
+			m.position.x;
+		const mm = m.material as THREE.MeshStandardMaterial;
+		const ei = mm.emissiveIntensity ?? 0;
+		const dist = Math.abs(wx - focusX) / Math.max(0.5, r);
+		const bi = Math.min(7, Math.floor(dist));
+		buckets[bi]!.n++;
+		buckets[bi]!.ei += ei;
+		buckets[bi]!.vis += m.visible ? 1 : 0;
+		buckets[bi]!.glow += litGlowFor(i);
+		if (wx >= lo && wx <= hi) { inViewLit++; inViewEi += ei; }
+		else { outViewLit++; outViewEi += ei; }
+	}
+	return {
+		focusX, viewRadius: r, lo, hi, litCount, targetCount: targetMeshes.size,
+		bloomThreshold: surf.bloomThreshold, peakLuma: bloom.peakLuma(),
+		bloomAuto: surf.bloomAutoThreshold, bloomStrength: surf.bloomStrength,
+		glowLit0: effNum("glowLit", 0), brightLit0: effNum("brightLit", 0),
+		litFollowBall: surf.litFollowBall,
+		inViewLit, inViewEiAvg: inViewLit ? inViewEi / inViewLit : 0,
+		outViewLit, outViewEiAvg: outViewLit ? outViewEi / outViewLit : 0,
+		buckets: buckets.map(b => ({
+			d: b.d, n: b.n, eiAvg: b.n ? +(b.ei / b.n).toFixed(3) : 0,
+			glowAvg: b.n ? +(b.glow / b.n).toFixed(3) : 0, vis: b.n ? +(b.vis / b.n).toFixed(2) : 0,
+		})),
+		frameLum: (globalThis as unknown as { __diagFrameLum?: Record<string, unknown> }).__diagFrameLum,
+		noteLum: (() => {
+			const c = (globalThis as unknown as { __diagNoteLum?: { inLum: number[]; outLum: number[] } }).__diagNoteLum;
+			const inL = c?.inLum ?? [], outL = c?.outLum ?? [];
+			const avg = (a: number[]) => (a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(1) : 0);
+			return {
+				inView: avg(inL), outView: avg(outL),
+				inN: inL.length, outN: outL.length,
+				inSample: inL.slice(0, 10).map((x) => +x.toFixed(0)),
+				outSample: outL.slice(0, 10).map((x) => +x.toFixed(0)),
+			};
+		})(),
+		// DIAG-TEMP 按路径（左右手）分组：颜色 luma 差异是光晕不一致根因。
+		// bloomPre = 修复前口径 luma(color)·f·(1+ei)，展示颜色导致的亮度差；
+		// bloomPost = 修复后口径 f·(1+ei)，与色相无关，各组应接近一致。
+		paths: (() => {
+			const map = new Map<number, { hex: number; luma: number; n: number; ei: number; glow: number; pre: number; post: number }>();
+			for (let i = 0; i < litCount; i++) {
+				const meshes = targetMeshes.get(i);
+				if (!meshes || !meshes.length) continue;
+				const mm = meshes[0]!.material as THREE.MeshStandardMaterial;
+				const c = mm.emissive;
+				const luma = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+				const ei = mm.emissiveIntensity ?? 0;
+				const glow = litGlowFor(i);
+				const f = 1 + glow * 3;
+				const pi = targetPath[i] ?? -1;
+				let e = map.get(pi);
+				if (!e) { e = { hex: litColorFor(i), luma: 0, n: 0, ei: 0, glow: 0, pre: 0, post: 0 }; map.set(pi, e); }
+				e.n++; e.luma += luma; e.ei += ei; e.glow += glow;
+				e.pre += luma * f * (1 + ei);
+				e.post += f * (1 + ei);
+			}
+			return [...map.entries()].map(([pi, e]) => ({
+				path: pi, hex: "#" + e.hex.toString(16).padStart(6, "0"), n: e.n,
+				lumaAvg: +(e.luma / e.n).toFixed(3),
+				eiAvg: +(e.ei / e.n).toFixed(3), glowAvg: +(e.glow / e.n).toFixed(3),
+				bloomPre: +(e.pre / e.n).toFixed(3), bloomPost: +(e.post / e.n).toFixed(3),
+			})).sort((a, b) => a.path - b.path);
+		})(),
+	};
+};
+// DIAG-TEMP 悬浮窗拖动边界诊断（控制台开关后下方隐形墙），定位后删除
+(globalThis as { __diagDock?: () => unknown }).__diagDock = () => {
+	const cs = getComputedStyle(document.documentElement);
+	const cssPx = (n: string): number => {
+		const v = Number.parseFloat(cs.getPropertyValue(n));
+		return Number.isFinite(v) ? v : 0;
+	};
+	const top = cssPx("--sh-canvas-top");
+	const bottom = window.innerHeight - cssPx("--sh-dock-bottom");
+	const left = cssPx("--sh-dock-left");
+	const right = window.innerWidth - cssPx("--sh-side-inset") - cssPx("--sh-dock-right");
+	const floats = [...document.querySelectorAll<HTMLElement>(".sh-float")].map((el) => {
+		const r = el.getBoundingClientRect();
+		const isPb = !!el.querySelector(":scope > .sh-pb");
+		const isSp = !!el.querySelector(".sp-host");
+		const h = el.offsetHeight;
+		const maxY = Math.max(top + 8, bottom - 8 - h);
+		return {
+			cls: el.className, isPb, isSp, pinned: el.dataset.pinned, hidden: el.hidden,
+			top: +r.top.toFixed(0), left: +r.left.toFixed(0), w: +r.width.toFixed(0), h,
+			atBottomWall: Math.abs(r.top - maxY) < 2, maxY: +maxY.toFixed(0),
+		};
+	});
+	return {
+		innerH: window.innerHeight, innerW: window.innerWidth,
+		cssVars: {
+			canvasTop: cssPx("--sh-canvas-top"), dockTop: cssPx("--sh-dock-top"),
+			dockBottom: cssPx("--sh-dock-bottom"), dockLeft: cssPx("--sh-dock-left"),
+			dockRight: cssPx("--sh-dock-right"), sideInset: cssPx("--sh-side-inset"),
+		},
+		canvasRect: { top: +top.toFixed(0), bottom: +bottom.toFixed(0), left: +left.toFixed(0), right: +right.toFixed(0), h: +(bottom - top).toFixed(0) },
+		floats,
+	};
+};
+// DIAG-TEMP 模拟"播放条被推到上方"：验证 --sh-dock-bottom 依赖播放条 top → 设置窗 maxY 变小（隐形墙）
+(globalThis as { __diagDockSim?: (up?: boolean) => unknown }).__diagDockSim = (up = true) => {
+	const pb = document.querySelector<HTMLElement>(".sh-float:has(> .sh-pb)");
+	const diag = (globalThis as { __diagDock?: () => unknown }).__diagDock;
+	if (!pb) return { err: "no player bar" };
+	const before = diag?.();
+	if (up) pb.style.top = "120px";
+	else pb.style.top = "";
+	window.dispatchEvent(new Event("resize"));
+	return { before, after: diag?.() };
+};
+// DIAG-TEMP 手动模拟播放进度（无播放器时点亮+移焦点），定位后删除
+// opts.focus: 焦点占 trackLength 的比例（默认跟到点亮末音）；opts.vr: 视野半径
+(globalThis as { __diagSeek?: (f: number, opts?: { focus?: number; vr?: number; lit?: number }) => void }).__diagSeek = (
+	f: number,
+	opts?: { focus?: number; vr?: number; lit?: number },
+) => {
+	const n = playTargets.length;
+	if (!n) return;
+	(globalThis as unknown as { __diagNoFollow?: boolean }).__diagNoFollow = true;
+	const t = playTargets[n - 1]!.time * Math.max(0, Math.min(1, f));
+	setLitProgress(t);
+	// opts.lit 直接指定点亮数量（绕过 time 映射不确定），定位后删除
+	if (opts?.lit !== undefined) {
+		(globalThis as unknown as { __diagLitLock?: boolean }).__diagLitLock = true;
+		const want = Math.min(n, Math.max(0, Math.floor(opts.lit)));
+		litCount = want;
+		for (let i = 0; i < n; i++) {
+			const b = i < want ? litBrightFor(i) : inkMat.emissiveIntensity ?? 0;
+			for (const m of targetMeshes.get(i) ?? [])
+				(m.material as THREE.MeshStandardMaterial).emissiveIntensity = b;
+		}
+		refreshElemColors();
+	}
+	const idx = Math.min(n - 1, Math.max(0, Math.floor(n * f)));
+	const fx =
+		opts?.focus !== undefined
+			? opts.focus * trackLength
+			: playTargets[idx]!.x;
+	setFocusX(fx, true);
+	if (opts?.vr !== undefined) surf.viewRadius = opts.vr;
+	applyViewCrop();
+};
+// DIAG-TEMP A/B 实验：改 surf 设置后立即同步 bloom/裁剪，定位后删除
+(globalThis as { __diagSetSurf?: (k: string, v: unknown) => void }).__diagSetSurf = (
+	k: string,
+	v: unknown,
+) => {
+	(surf as unknown as Record<string, unknown>)[k] = v;
+	applyBloomSurf();
+	applyViewCrop();
+};
 
 // 初始 bloom 参数与四源光效权重：放在全部模块状态就位之后、首帧之前调用一次
 // （它要读 ballTracks / targetMeshes，早于这里会踩 TDZ）。
@@ -7749,8 +8521,18 @@ applyBloomSurf();
 
 // ── 启动 ───────────────────────────────────────────────────────
 async function boot(): Promise<void> {
-	const xml = sessionStorage.getItem("midee.xml");
-	const name = sessionStorage.getItem("midee.name");
+	let xml = sessionStorage.getItem("midee.xml");
+	let name = sessionStorage.getItem("midee.name");
+	// DIAG-TEMP 诊断入口：无乐谱时 ?diagSample 自动加载示例谱，便于复现光效问题，定位后删除
+	if (!xml && /[?&]diagSample=/.test(location.search)) {
+		try {
+			const resp = await fetch("/src/3dtest/sample.xml");
+			xml = await resp.text();
+			name = "diag-sample";
+		} catch (e) {
+			console.error("diag sample load failed", e);
+		}
+	}
 	const ok = await initVerovio();
 	if (!ok) {
 		setInfo(() => t("p4.info.engineFail"));
@@ -7930,6 +8712,13 @@ const exportApi: ExportApi = {
 			return null;
 		}
 	},
+	probeRasterFormats: () => probeRasterFormats(),
+	capturePreview: (image) => capturePreviewImage(image),
+	setPreviewActive: (active) => {
+		previewHold = active;
+		if (active) player?.pause(); // 打开预览弹窗：暂停播放并冻结场景动画
+		// 关闭时仅恢复动画循环，不自动续播（交由用户控制）
+	},
 	exportModel: (opts, on) => exportModelFile(opts, on),
 	exportVideo: (opts, on, cancelled) => exportVideoFile(opts, on, cancelled),
 	exportImage: (opts, on) => exportImageFile(opts, on),
@@ -7941,6 +8730,8 @@ const exportApi: ExportApi = {
 			includeXml: opts.includeXml,
 			includeConfig: opts.includeConfig,
 			includePrefs: opts.includePrefs,
+			includeCam: opts.includeCam,
+			includeTime: opts.includeTime,
 			includeResources: opts.includeResources,
 		});
 		on("finalizing", 1, undefined);
@@ -8795,6 +9586,7 @@ async function exportImageFile(
 	onProgress: ExportProgress,
 ): Promise<void> {
 	if (!allElems.length) throw new Error(t("ex.noScore"));
+	if (opts.mode === "vector") return exportVectorFile(opts, onProgress);
 
 	const savedTime = player?.currentTime ?? 0;
 	player?.pause();
@@ -8848,10 +9640,18 @@ async function exportImageFile(
 
 		// 与实时画面一致：走选择性 bloom 后处理再同步抓帧
 		bloom.renderFrame();
-		const dataUrl = renderer.domElement.toDataURL("image/png");
 		onProgress("finalizing", 0.9, t("ex.note.packImage"));
-		const blob = await (await fetch(dataUrl)).blob();
-		downloadBlob(blob, exportBaseName() + ".png");
+		const mime = opts.rasterFormat || "image/png";
+		const ext = mime === "image/jpeg" ? "jpg" : mime.split("/")[1] || "png";
+		const quality = mime === "image/jpeg" ? 0.92 : undefined;
+		const blob = await new Promise<Blob>((resolve, reject) => {
+			renderer.domElement.toBlob(
+				(b) => (b ? resolve(b) : reject(new Error("canvas toBlob failed"))),
+				mime,
+				quality,
+			);
+		});
+		downloadBlob(blob, exportBaseName() + "." + ext);
 		onProgress("done", 1);
 	} finally {
 		exportHold = false;
@@ -8863,6 +9663,293 @@ async function exportImageFile(
 		player?.seek(savedTime);
 		player?.pause();
 		updateBalls(Math.min(savedTime, player?.duration ?? savedTime));
+	}
+}
+
+// ── 矢量 SVG 导出（SVGRenderer 真矢量） + 预览 ───────────────────────
+/** 探测浏览器原生支持的位图编码格式（返回 MIME 列表） */
+function probeRasterFormats(): string[] {
+	const candidates = [
+		"image/png",
+		"image/jpeg",
+		"image/webp",
+		"image/avif",
+		"image/bmp",
+	];
+	const c = document.createElement("canvas");
+	c.width = 2;
+	c.height = 2;
+	const out: string[] = [];
+	for (const t of candidates) {
+		try {
+			const url = c.toDataURL(t);
+			if (url.startsWith("data:" + t)) out.push(t);
+		} catch {
+			/* 不支持则跳过 */
+		}
+	}
+	return out.length ? out : ["image/png"];
+}
+
+/** 取对象材质主色（hex），取不到回退 fallback */
+function svgObjColor(obj: THREE.Object3D, fallback: number): number {
+	const m = (obj as THREE.Mesh).material as
+		| THREE.Material
+		| THREE.Material[]
+		| undefined;
+	const mat = Array.isArray(m) ? m[0] : m;
+	const c = (mat as THREE.MeshStandardMaterial | undefined)?.color;
+	return c ? c.getHex() : fallback;
+}
+
+/** ColorManagement 开启时把线性 Color 转回 sRGB 显示色（供 SVGRenderer 直接输出，匹配屏幕） */
+function svgDisplayColor(c: THREE.Color): THREE.Color {
+	return THREE.ColorManagement.enabled ? c.clone().convertLinearToSRGB() : c;
+}
+/** 把"线性 hex"（color.getHex() 返回值）解释为线性 Color，避免构造时被当成 sRGB 二次转换 */
+function svgLinearHexColor(hex: number): THREE.Color {
+	return THREE.ColorManagement.enabled
+		? new THREE.Color().setHex(hex, THREE.LinearSRGBColorSpace)
+		: new THREE.Color(hex);
+}
+
+interface BuiltVectorScene {
+	root: THREE.Group;
+	dispose: () => void;
+}
+
+/** 按 SVG 选项构建独立临时场景：几何共享 live，材质全新；不改动 live 场景 */
+function buildVectorScene(svg: ImageExportOpts["svg"], preview = false): BuiltVectorScene {
+	const disposables: THREE.Material[] = [];
+	const edgeGeos: THREE.BufferGeometry[] = [];
+	const root = new THREE.Group();
+	root.rotation.copy(world.rotation);
+	root.scale.copy(world.scale);
+	root.position.copy(world.position);
+
+	const stroke = svgDisplayColor(new THREE.Color(svg.strokeColor));
+	// 预览时跳过 EdgesGeometry（大谱面生成极慢）：预览只看构图/配色，线框细节以导出为准
+	const needEdges = !preview && (svg.renderMode === "wireframe" || svg.renderMode === "both");
+	const fillNone = svg.fillSource === "none";
+	const solidFillColor =
+		svg.fillSource === "solid" ? svgDisplayColor(new THREE.Color(svg.fillColor)) : null;
+
+	const faceMatFor = (obj: THREE.Object3D): THREE.MeshBasicMaterial => {
+		const color = fillNone
+			? new THREE.Color(0xffffff)
+			: solidFillColor ?? svgDisplayColor(svgLinearHexColor(svgObjColor(obj, 0xcccccc)));
+		const mat = new THREE.MeshBasicMaterial({
+			side: THREE.DoubleSide,
+			transparent: fillNone,
+			opacity: fillNone ? 0 : 1,
+		});
+		mat.color.copy(color); // copy 不触发颜色管理转换，确保写入的是显示色
+		disposables.push(mat);
+		return mat;
+	};
+	const addMesh = (obj: THREE.Object3D): void => {
+		const src = obj as THREE.Mesh;
+		if (!src.geometry) return;
+		const m = new THREE.Mesh(src.geometry, faceMatFor(src));
+		m.position.copy(src.position);
+		m.rotation.copy(src.rotation);
+		m.scale.copy(src.scale);
+		m.visible = src.visible;
+		root.add(m);
+		if (needEdges) {
+			const edges = new THREE.EdgesGeometry(src.geometry, 1);
+			edgeGeos.push(edges);
+			const emat = new THREE.LineBasicMaterial({
+				color: stroke,
+				linewidth: svg.strokeWidth,
+			});
+			disposables.push(emat);
+			const seg = new THREE.LineSegments(edges, emat);
+			seg.position.copy(src.position);
+			seg.rotation.copy(src.rotation);
+			seg.scale.copy(src.scale);
+			seg.visible = src.visible;
+			root.add(seg);
+		}
+	};
+	const addLine = (obj: THREE.Object3D): void => {
+		const src = obj as THREE.Line;
+		if (!src.geometry) return;
+		const mat = new THREE.LineBasicMaterial({
+			color: stroke,
+			linewidth: svg.strokeWidth,
+		});
+		disposables.push(mat);
+		const l = new THREE.Line(src.geometry, mat);
+		l.position.copy(src.position);
+		l.rotation.copy(src.rotation);
+		l.scale.copy(src.scale);
+		l.visible = src.visible;
+		root.add(l);
+	};
+
+	// 底板 backplate 是背景衬托板，宽度=trackLength（长曲目可达数万单位），
+	// 导出会产生超大坐标撑爆 SVG；矢量背景由 svg.background 单独控制，不需要它的几何
+	if (svg.includeModel) for (const c of stage.children) if (c !== backplate) addMesh(c);
+	if (svg.includePaths)
+		for (const c of ballGroup.children)
+			if (c.userData.kind === "trackArc") addLine(c);
+	if (svg.includeBalls)
+		for (const c of ballGroup.children) {
+			const k = c.userData.kind;
+			if (k === "ball" || k === "splitBall") addMesh(c);
+		}
+	if (svg.includeHelpers)
+		for (const c of ballGroup.children) {
+			const k = c.userData.kind;
+			if (k === "startLine" || k === "endLine") addLine(c);
+		}
+	if (svg.includeTrails) for (const c of trailGroup.children) addMesh(c);
+	if (svg.includeBackground) for (const c of bgGroup.children) addMesh(c);
+
+	return {
+		root,
+		dispose: () => {
+			for (const m of disposables) m.dispose();
+			for (const g of edgeGeos) g.dispose();
+		},
+	};
+}
+
+/** 与位图导出同相机、同裁剪口径，渲染一帧矢量 SVG 字符串 */
+function renderVectorSvgString(opts: ImageExportOpts, outW: number, outH: number, preview = false): string {
+	const view = visibleViewRect();
+	const ar = opts.ratio === "source" ? null : aspectById(opts.ratio);
+	const rc = ar
+		? (() => {
+				const c = cropRectFor(view.w, view.h, ar.ratio);
+				return { x: view.x + c.x, y: view.y + c.y, w: c.w, h: c.h };
+		  })()
+		: { x: view.x, y: view.y, w: view.w, h: view.h };
+
+	const built = buildVectorScene(opts.svg, preview);
+	const tmpScene = new THREE.Scene();
+	if (opts.svg.background === "solid") {
+		tmpScene.background = new THREE.Color(opts.svg.bgColor);
+	} else if (opts.svg.background === "scene") {
+		const bg = scene.background as THREE.Color | null;
+		if (bg && bg.isColor) tmpScene.background = bg.clone();
+	}
+	tmpScene.add(built.root);
+	// 背景色同样需要线性→sRGB，否则 SVGRenderer 写入的 background-color 偏暗
+	if (tmpScene.background && (tmpScene.background as THREE.Color).isColor) {
+		tmpScene.background = svgDisplayColor(tmpScene.background as THREE.Color);
+	}
+
+	const prevAspect = camera.aspect;
+	const scale = outH / rc.h;
+	const fullW = Math.max(2, Math.round(container.clientWidth * scale));
+	const fullH = Math.max(2, Math.round(container.clientHeight * scale));
+	camera.aspect = fullW / fullH;
+	camera.setViewOffset(
+		fullW,
+		fullH,
+		rc.x * scale,
+		rc.y * scale,
+		rc.w * scale,
+		rc.h * scale,
+	);
+	camera.updateProjectionMatrix();
+
+	const svgRenderer = new SVGRenderer();
+	svgRenderer.setQuality(preview ? "low" : "high");
+	svgRenderer.overdraw = 0.5;
+	svgRenderer.setSize(outW, outH);
+	svgRenderer.render(tmpScene, camera);
+	const el = svgRenderer.domElement;
+	if (opts.svg.background === "transparent") el.style.backgroundColor = "";
+	const str = new XMLSerializer().serializeToString(el);
+
+	camera.aspect = prevAspect;
+	camera.clearViewOffset();
+	camera.updateProjectionMatrix();
+	built.dispose();
+	return str;
+}
+
+/** 矢量模式：导出 SVG 文件 */
+async function exportVectorFile(
+	opts: ImageExportOpts,
+	onProgress: ExportProgress,
+): Promise<void> {
+	if (!allElems.length) throw new Error(t("ex.noScore"));
+	const savedTime = player?.currentTime ?? 0;
+	player?.pause();
+
+	// 输出以 width 为基准，按实际裁剪比例归一化高度，避免画面变形
+	const view = visibleViewRect();
+	const ar = opts.ratio === "source" ? null : aspectById(opts.ratio);
+	const rc = ar
+		? cropRectFor(view.w, view.h, ar.ratio)
+		: { w: view.w, h: view.h };
+	const outW = Math.max(100, Math.min(8000, Math.round(opts.svg.width)));
+	const outH = Math.max(100, Math.round((outW * rc.h) / rc.w));
+	onProgress("preparing", 0.25, `${outW}×${outH}`);
+
+	exportHold = true;
+	try {
+		onProgress("finalizing", 0.85, t("ex.note.packImage"));
+		const svg = renderVectorSvgString(opts, outW, outH);
+		const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+		downloadBlob(blob, exportBaseName() + ".svg");
+		onProgress("done", 1);
+	} finally {
+		exportHold = false;
+		resize();
+		clearAllTrailHist();
+		player?.seek(savedTime);
+		player?.pause();
+		updateBalls(Math.min(savedTime, player?.duration ?? savedTime));
+	}
+}
+
+/** 生成贴近实际导出的预览图（dataURL）；失败返回 null */
+function capturePreviewImage(opts: ImageExportOpts): string | null {
+	try {
+		const view = visibleViewRect();
+		const ar = opts.ratio === "source" ? null : aspectById(opts.ratio);
+		const rc = ar
+			? (() => {
+					const c = cropRectFor(view.w, view.h, ar.ratio);
+					return { x: view.x + c.x, y: view.y + c.y, w: c.w, h: c.h };
+			  })()
+			: { x: view.x, y: view.y, w: view.w, h: view.h };
+		// 预览降采样：矢量预览生成较重，缩小尺寸减少渲染开销（导出时仍是完整尺寸）
+		const maxW = 320;
+		const dstW = maxW;
+		const dstH = Math.max(80, Math.round((maxW * rc.h) / rc.w));
+
+		if (opts.mode === "vector") {
+			const svg = renderVectorSvgString(opts, dstW, dstH, true);
+			return "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svg)));
+		}
+
+		bloom.renderFrame();
+		const dpr = renderer.getPixelRatio();
+		const c = document.createElement("canvas");
+		c.width = dstW;
+		c.height = dstH;
+		const ctx = c.getContext("2d");
+		if (!ctx) return null;
+		ctx.drawImage(
+			renderer.domElement,
+			rc.x * dpr,
+			rc.y * dpr,
+			rc.w * dpr,
+			rc.h * dpr,
+			0,
+			0,
+			dstW,
+			dstH,
+		);
+		return c.toDataURL("image/png");
+	} catch {
+		return null;
 	}
 }
 

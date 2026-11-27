@@ -4,6 +4,10 @@
 export const PROJECT_VERSION = 1;
 export const PROJECT_FILE = "project.json";
 export const SURF_KEY = "midee.surf3d";
+/** 第五页「工具 ▾ → 相机」的状态（模式/焦点/球坐标/居中参数/自由位姿），main.ts 持久化 */
+export const CAM_KEY = "midee.cam3d";
+/** 第五页「工具 ▾ → 时间」里的音画对齐（毫秒，localStorage）；首尾留白在 midee.links 里 */
+export const AV_KEY = "midee.avOffset";
 
 /** 随谱面传递的工程数据（sessionStorage） */
 const SESSION_KEYS = [
@@ -59,6 +63,10 @@ export interface ProjectState {
 	session: Record<string, string>;
 	prefs: Record<string, string>;
 	surf: Record<string, unknown> | null;
+	/** 第五页「工具 ▾ → 相机」状态（midee.cam3d 整份搬运） */
+	cam: Record<string, unknown> | null;
+	/** 第五页「工具 ▾ → 时间」：首尾留白（=links 的 offStart/offEnd）+ 音画对齐（秒，与 midee.avOffset 同口径） */
+	time: { offStart: number; offEnd: number; avOffsetSec: number } | null;
 	resources: ResourceEntry[];
 }
 
@@ -111,6 +119,10 @@ export interface CollectOpts {
 	prefs?: boolean;
 	/** 含已下载资源清单（默认 true） */
 	resources?: boolean;
+	/** 含第五页相机状态（默认 true） */
+	cam?: boolean;
+	/** 含第五页时间设置（首尾留白/音画对齐，默认 true） */
+	time?: boolean;
 }
 
 export function collectProjectState(
@@ -119,6 +131,8 @@ export function collectProjectState(
 ): ProjectState {
 	const wantPrefs = opts.prefs !== false;
 	const wantRes = opts.resources !== false;
+	const wantCam = opts.cam !== false;
+	const wantTime = opts.time !== false;
 	const session: Record<string, string> = {};
 	for (const k of SESSION_KEYS) {
 		const v = readSS(k);
@@ -158,6 +172,44 @@ export function collectProjectState(
 		}
 	}
 
+	// 相机状态：midee.cam3d 整份搬运（模式/焦点/球坐标/居中参数/自由位姿）
+	let cam: Record<string, unknown> | null = null;
+	if (wantCam) {
+		try {
+			cam = JSON.parse(readLS(CAM_KEY) ?? "null");
+		} catch {
+			cam = null;
+		}
+	}
+
+	// 时间设置：首尾留白取 midee.links 的 offStart/offEnd（与第三页同源），
+	// 音画对齐取 localStorage（秒，main.ts setAvOffset 同口径）。
+	let time: ProjectState["time"] = null;
+	if (wantTime) {
+		let offStart: number | undefined;
+		let offEnd: number | undefined;
+		try {
+			const links = JSON.parse(readSS("midee.links") ?? "null") as {
+				offStart?: unknown;
+				offEnd?: unknown;
+			} | null;
+			const l = Number(links?.offStart);
+			const t = Number(links?.offEnd);
+			if (Number.isFinite(l) && l > 0) offStart = l;
+			if (Number.isFinite(t) && t > 0) offEnd = t;
+		} catch {
+			/* 无 links 数据 */
+		}
+		const av = Number(readLS(AV_KEY));
+		if (offStart !== undefined || offEnd !== undefined || Number.isFinite(av)) {
+			time = {
+				offStart: offStart ?? 0.7,
+				offEnd: offEnd ?? 0.7,
+				avOffsetSec: Number.isFinite(av) ? av : 0,
+			};
+		}
+	}
+
 	return {
 		version: PROJECT_VERSION,
 		app: "星跃谱 LumiScore",
@@ -167,6 +219,8 @@ export function collectProjectState(
 		session,
 		prefs,
 		surf,
+		cam,
+		time,
 		resources: wantRes ? collectResources() : [],
 	};
 }
@@ -193,8 +247,29 @@ export function applyProjectState(state: ProjectState): number {
 			localStorage.setItem(k, v);
 		}
 		if (state.surf) localStorage.setItem(SURF_KEY, JSON.stringify(state.surf));
+		if (state.cam) localStorage.setItem(CAM_KEY, JSON.stringify(state.cam));
 	} catch {
 		/* noop */
+	}
+	// 时间设置：首尾留白合并回 midee.links（session 已在上面还原，这里只覆盖这两个
+	// 字段），音画对齐写 localStorage——第五页启动时各自读入生效。
+	if (state.time) {
+		try {
+			const raw = sessionStorage.getItem("midee.links");
+			const links = raw
+				? (JSON.parse(raw) as Record<string, unknown>)
+				: {};
+			links.offStart = state.time.offStart;
+			links.offEnd = state.time.offEnd;
+			sessionStorage.setItem("midee.links", JSON.stringify(links));
+		} catch {
+			/* noop */
+		}
+		try {
+			localStorage.setItem(AV_KEY, String(state.time.avOffsetSec));
+		} catch {
+			/* noop */
+		}
 	}
 	const step = Number(state.step);
 	return step >= 1 && step <= 5 ? step : 2;

@@ -195,6 +195,11 @@ export async function runImportPipeline(
   for (const m of ep.repeat) push('repeat', m)
   if (!ep.repeat.length) push('ok', '没有需要展开的反复 / 跳转记号')
   xml = ep.xml
+  if (ep.repeat.length) {
+    // expandRepeats 克隆小节会复制音符 id，第三页按 id 绑 MIDI 时间时，重复段的音符会
+    // 拿到错误时间、圆滑线/连音线点亮错乱；展开后重打一次 id，保证全局唯一。
+    xml = autocorrectXml(xml).xml
+  }
   setStage(3, 'done')
 
   // ── Verovio 终检（渲染闸门） ──

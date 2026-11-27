@@ -335,9 +335,12 @@ export function preprocessScore(rawXml: string, tk: VerovioLike): PreprocessResu
   ok.push(...ac.ok)
   const ep = expandRepeatsXml(ac.xml)
   repeat.push(...ep.repeat)
-  const err = verovioProbe(tk, ep.xml)
+  // expandRepeats 克隆小节会复制音符 id，第三页按 id 绑 MIDI 时间时，重复段的音符会
+  // 拿到错误时间、圆滑线/连音线点亮错乱；有展开时重打一次 id，保证全局唯一。
+  const finalXml = ep.repeat.length ? autocorrectXml(ep.xml).xml : ep.xml
+  const err = verovioProbe(tk, finalXml)
   if (err) fatal.push(err)
   else ok.push('渲染引擎校验通过，乐谱可以正常显示')
 
-  return { xml: ep.xml, fatal, auto, repeat, ok }
+  return { xml: finalXml, fatal, auto, repeat, ok }
 }

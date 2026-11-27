@@ -42,6 +42,8 @@ import { fetchTextureList, type PHAsset } from "./polyhaven";
 
 export type ArcStyle = "solid" | "dashed" | "none";
 export type TrajShape = "parabola" | "line";
+/** 元素点亮三档：off=关闭（不点亮）/ stream=流式（前沿随播放头扫过）/ block=逐块（经过时整块点亮） */
+export type LitMode = "off" | "stream" | "block";
 /** 渲染设备：auto = 逐级降级；gpu = 强制高性能显卡；cpu = 低功耗软渲染 */
 export type DeviceMode = "auto" | "gpu" | "cpu";
 /** 球光晕特效样式（three-glow-mesh）：关闭 / 柔和 / 光环 */
@@ -133,6 +135,11 @@ export interface SurfSettings {
 	/** 点亮色跟随小球/路径色（默认开）：开着时下面的点亮颜色设置项隐藏 */
 	litFollowBall: boolean;
 	litColor: number; // 不跟随时的自定义点亮色
+	litTie: LitMode; // 连音线点亮
+	litSlur: LitMode; // 圆滑线点亮
+	litFingering: LitMode; // 指法点亮
+	litChordMark: LitMode; // 和弦标记点亮
+	litLyric: LitMode; // 歌词点亮（只控制发光，不控制显示；显示与否在乐谱页管理）
 	// ── 水面（暂未开放，保留状态兼容 main.ts） ──
 	waterOn: boolean;
 	waterAmp: number;
@@ -164,6 +171,10 @@ export interface SurfSettings {
 	/** 逐路径数值覆盖（null/缺省 = 吃全局默认值）。选中多条且取值不一致时，
 	 *  滑轨旁的输入框显示「多值」。 */
 	pathNums: Partial<Record<PathNumKey, (number | null)[]>>;
+	/** 逐路径字符串覆盖（null/缺省 = 吃全局默认值）：材质预设 / 光晕样式 */
+	pathStrs: Partial<Record<PathStrKey, (string | null)[]>>;
+	/** 逐路径布尔覆盖（null/缺省 = 吃全局默认值）：撞击粒子 */
+	pathBools: Partial<Record<PathBoolKey, (boolean | null)[]>>;
 	/** 修复页签的巡检调度（与外观无关，但同样要落盘） */
 	repair: RepairSettings;
 }
@@ -176,8 +187,9 @@ export interface SettingsPanelHandle {
 }
 
 /**
- * 可以「每条路径各一份」的数值项。拖尾跟随小球、不做逐路径；
- * 亮度阈值/视距这类整幅画面共用的项也不在此列（它们不可能出现多值）。
+ * 可以「每条路径各一份」的数值项。bloom 全屏后处理、视距这类整幅画面共用的项不在此列。
+ * rough/metal/trailPct 原本是全局值，本轮改造成逐路径可调；回落分别取
+ * surf.matTune.ball.rough / surf.matTune.ball.metal / surf.trailPct（见 globalNumVal）。
  */
 export type PathNumKey =
 	| "ballSize"
@@ -186,7 +198,14 @@ export type PathNumKey =
 	| "ballLightIntensity"
 	| "ballGlowRange"
 	| "brightLit"
-	| "glowLit";
+	| "glowLit"
+	| "ballRough"
+	| "ballMetal"
+	| "trailPct";
+/** 逐路径字符串项：球材质预设（回落 surf.mat.ball.preset）、球光晕样式（回落 surf.ballGlowStyle） */
+export type PathStrKey = "ballPreset" | "ballGlowStyle";
+/** 逐路径布尔项：撞击粒子（回落 surf.hitFx） */
+export type PathBoolKey = "hitFx";
 
 // ── 小控件工厂 ────────────────────────────────────────────────
 function row(label: string, control: HTMLElement): HTMLElement {
@@ -682,11 +701,23 @@ export function createSettingsPanel(
 	}
 
 	// ── 路径作用域：面板顶部的「全选 / 路径1 / 路径2」决定颜色改谁 ──
+	// selectedPaths 三态：[] = 全选；[-1] = 全不选（调分轨项不影响任何轨道）；
+	// 其余非空数组 = 选中这些路径。[-1] 只在 UI 层用，main.ts 不读 selectedPaths。
 	function pathScope(): number[] {
 		const n = settings.pathNames.length;
 		if (!n) return [];
+		if (settings.selectedPaths.length === 1 && settings.selectedPaths[0] === -1) return [];
 		const sel = settings.selectedPaths.filter((i) => i >= 0 && i < n);
 		return sel.length ? sel : Array.from({ length: n }, (_, i) => i);
+	}
+	/** 全选状态：空数组，或手动把所有路径都选上（用于全选按钮同步高亮） */
+	function isAllSelected(): boolean {
+		const n = settings.pathNames.length;
+		if (!n) return true;
+		if (settings.selectedPaths.length === 1 && settings.selectedPaths[0] === -1) return false;
+		if (settings.selectedPaths.length === 0) return true;
+		const sel = settings.selectedPaths.filter((i) => i >= 0 && i < n);
+		return sel.length === n;
 	}
 	function scopeLabel(): string {
 		const n = settings.pathNames.length;
@@ -714,43 +745,68 @@ export function createSettingsPanel(
 				0x9aa7b5,
 		);
 	}
-	/** 路径多选栏（全选 / 路径1 / 路径2 …）——小球页和点亮页共用 */
+	/** 路径多选栏（全选 / 路径1 / 路径2 …）——小球页和点亮页共用。
+	 *  全选按钮固定在栏首不随横向滚动；点击在「全选」/「全不选」间切换；
+	 *  用户手动逐个选完所有路径时，全选按钮也同步高亮。 */
 	function pathBar(): HTMLElement | null {
 		if (settings.pathNames.length === 0) return null;
 		const bar = document.createElement("div");
 		bar.className = "sp-pathbar";
+		const all = isAllSelected();
 		const allBtn = document.createElement("button");
 		allBtn.type = "button";
-		allBtn.className =
-			"sp-pathbtn" + (settings.selectedPaths.length === 0 ? " sp-pathbtn--on" : "");
-		allBtn.textContent = t("sp.selectAll");
+		allBtn.className = "sp-pathbtn sp-pathbtn--all" + (all ? " sp-pathbtn--on" : "");
+		allBtn.textContent = all ? t("sp.deselectAll") : t("sp.selectAll");
 		allBtn.addEventListener("click", () => {
-			onChange({ selectedPaths: [] });
+			onChange({ selectedPaths: all ? [-1] : [] });
 			renderPage();
 		});
 		bar.append(allBtn);
+		const scroll = document.createElement("div");
+		scroll.className = "sp-pathbar__scroll";
+		const scope = pathScope();
 		settings.pathNames.forEach((name, i) => {
 			const b = document.createElement("button");
 			b.type = "button";
-			const on =
-				settings.selectedPaths.length === 0 ||
-				settings.selectedPaths.includes(i);
+			const on = scope.includes(i);
 			b.className = "sp-pathbtn" + (on ? " sp-pathbtn--on" : "");
 			b.textContent = name;
 			b.addEventListener("click", () => {
-				const sel = new Set(settings.selectedPaths);
-				if (sel.has(i)) sel.delete(i);
-				else sel.add(i);
-				onChange({ selectedPaths: Array.from(sel) });
+				const raw = settings.selectedPaths;
+				// 从「全不选」(-1) 起步时，集合从空开始，避免 -1 混进结果
+				const set =
+					raw.length === 1 && raw[0] === -1
+						? new Set<number>()
+						: new Set(raw.filter((x) => x >= 0));
+				if (set.has(i)) set.delete(i);
+				else set.add(i);
+				onChange({ selectedPaths: Array.from(set) });
 				renderPage();
 			});
-			bar.append(b);
+			scroll.append(b);
 		});
+		bar.append(scroll);
 		return bar;
+	}
+	/** PathNumKey → 全局回落值：rough/metal/trailPct 在嵌套字段里，单独映射 */
+	const NUM_GLOBAL: Record<PathNumKey, (s: SurfSettings) => number> = {
+		ballSize: (s) => s.ballSize,
+		brightBall: (s) => s.brightBall,
+		glowBall: (s) => s.glowBall,
+		ballLightIntensity: (s) => s.ballLightIntensity,
+		ballGlowRange: (s) => s.ballGlowRange,
+		brightLit: (s) => s.brightLit,
+		glowLit: (s) => s.glowLit,
+		ballRough: (s) => s.matTune.ball.rough,
+		ballMetal: (s) => s.matTune.ball.metal,
+		trailPct: (s) => s.trailPct,
+	};
+	function globalNum(key: PathNumKey): number {
+		return NUM_GLOBAL[key](settings);
 	}
 	/** 作用域内各路径的生效值（去重）：>1 个就说明现在是"多值"状态 */
 	function scopeVals(key: PathNumKey): number[] {
-		const g = settings[key] as number;
+		const g = globalNum(key);
 		const arr = settings.pathNums[key];
 		return [...new Set(pathScope().map((i) => arr?.[i] ?? g))];
 	}
@@ -776,7 +832,7 @@ export function createSettingsPanel(
 			min,
 			max,
 			step,
-			vals[0] ?? (settings[key] as number),
+			vals[0] ?? globalNum(key),
 			(v) => writeNums(key, v, false),
 			false,
 			vals.length > 1,
@@ -793,6 +849,68 @@ export function createSettingsPanel(
 			label, // 作用域由顶部路径栏表示，这里不再重复挂后缀
 			ctl,
 		);
+	}
+	// ── 逐路径字符串（材质预设 / 光晕样式）：原本全局，本轮改造成分轨可调 ──
+	const STR_GLOBAL: Record<PathStrKey, (s: SurfSettings) => string> = {
+		ballPreset: (s) => s.mat.ball.preset,
+		ballGlowStyle: (s) => s.ballGlowStyle,
+	};
+	function globalStr(key: PathStrKey): string {
+		return STR_GLOBAL[key](settings);
+	}
+	/** 作用域内各路径的生效字符串（去重）：>1 个即"多值" */
+	function scopeStrs(key: PathStrKey): string[] {
+		const g = globalStr(key);
+		const arr = settings.pathStrs[key];
+		return [...new Set(pathScope().map((i) => arr?.[i] ?? g))];
+	}
+	function writeStrs(key: PathStrKey, v: string, rerender = true): void {
+		const arr = [...(settings.pathStrs[key] ?? [])];
+		for (const i of pathScope()) arr[i] = v;
+		onChange({ pathStrs: { ...settings.pathStrs, [key]: arr } });
+		if (rerender) renderPage();
+	}
+	/** 逐路径下拉：多值时 label 标注，选值即把作用域内所有路径统一 */
+	function pathSelect(
+		label: string,
+		key: PathStrKey,
+		items: { v: string; l: string }[],
+	): HTMLElement {
+		const vals = scopeStrs(key);
+		const multi = vals.length > 1;
+		const ctl = selectOf(items, vals[0] ?? globalStr(key), (v) =>
+			writeStrs(key, v, false),
+		);
+		ctl.addEventListener("change", () => renderPage());
+		return row(multi ? `${label} · ${t("sp.multi")}` : label, ctl);
+	}
+	// ── 逐路径布尔（撞击粒子）：原本全局，本轮改造成分轨可调 ──
+	const BOOL_GLOBAL: Record<PathBoolKey, (s: SurfSettings) => boolean> = {
+		hitFx: (s) => s.hitFx,
+	};
+	function globalBool(key: PathBoolKey): boolean {
+		return BOOL_GLOBAL[key](settings);
+	}
+	function scopeBools(key: PathBoolKey): boolean[] {
+		const g = globalBool(key);
+		const arr = settings.pathBools[key];
+		return [...new Set(pathScope().map((i) => arr?.[i] ?? g))];
+	}
+	function writeBools(key: PathBoolKey, v: boolean, rerender = true): void {
+		const arr = [...(settings.pathBools[key] ?? [])];
+		for (const i of pathScope()) arr[i] = v;
+		onChange({ pathBools: { ...settings.pathBools, [key]: arr } });
+		if (rerender) renderPage();
+	}
+	/** 逐路径复选框：多值时半选（indeterminate），点击即把作用域内所有路径统一 */
+	function pathCheckbox(label: string, key: PathBoolKey): HTMLElement {
+		const vals = scopeBools(key);
+		const multi = vals.length > 1;
+		const checked = multi ? false : (vals[0] ?? globalBool(key));
+		const ctl = checkbox(checked, (c) => writeBools(key, c, false));
+		if (multi) ctl.indeterminate = true;
+		ctl.addEventListener("change", () => renderPage());
+		return row(multi ? `${label} · ${t("sp.multi")}` : label, ctl);
 	}
 	function pathColorRow(): HTMLElement {
 		const sel = pathScope();
@@ -1656,95 +1774,11 @@ export function createSettingsPanel(
 		else renderTrack(root);
 	}
 
-	function renderBall(root: HTMLElement): void {
-		// 顶部路径多选按钮栏（全选默认开，可横向滚动）
-		const bar = pathBar();
-		if (bar) root.append(bar);
-		// 材质行：颜色窗（跟随路径色/自定义）+ 材质下拉（含纯色）
-		const ballCfg = settings.mat.ball;
-		const patchBallCfg = (over: Partial<ObjMatConfig>): void => {
-			onChange({ mat: { ...settings.mat, ball: { ...ballCfg, ...over } } });
-		};
-		root.append(
-			subhead(t("sp.material")),
-			pathColorRow(),
-			row(
-				t("sp.material"),
-				selectOf(
-					[
-						{ v: "flat", l: t("sp.preset.flat") },
-						{ v: "metal", l: t("sp.preset.metal") },
-						{ v: "glass", l: t("sp.preset.glass") },
-						{ v: "paper", l: t("sp.preset.paper") },
-						{ v: "wood", l: t("sp.preset.wood") },
-						{ v: "tile", l: t("sp.preset.tile") },
-					],
-					ballCfg.preset,
-					(v) => patchBallCfg({ preset: v as AnyPreset }),
-				),
-			),
-			row(
-				t("sp.rough"),
-				slider(0, 1, 0.01, settings.matTune.ball.rough, (v) =>
-					onChange({
-						matTune: {
-							...settings.matTune,
-							ball: { ...settings.matTune.ball, rough: v },
-						},
-					}),
-				),
-			),
-			row(
-				t("sp.metal"),
-				slider(0, 1, 0.01, settings.matTune.ball.metal, (v) =>
-					onChange({
-						matTune: {
-							...settings.matTune,
-							ball: { ...settings.matTune.ball, metal: v },
-						},
-					}),
-				),
-			),
-		);
-		root.append(
-			subhead(t("sp.size")),
-			pathSlider(t("sp.ballSize"), "ballSize", 0.1, 2, 0.01),
-			row(
-				t("sp.hitFx"),
-				checkbox(settings.hitFx, (c) => onChange({ hitFx: c })),
-			),
-		);
-		root.append(
-			subhead(t("sp.trailGlow")),
-			row(
-				t("sp.trailLen"),
-				slider(0, 200, 5, settings.trailPct, (v) => onChange({ trailPct: v })),
-			),
-			// 光晕特效样式：这一项以前没有控件、状态里却固定 "off"，导致下面的
-			// 「光晕范围」无论怎么拖都不可能有反应（glowMesh 一直 visible=false）
-			row(
-				t("sp.glowStyle"),
-				selectOf(
-					[
-						{ v: "off", l: t("sp.glowStyle.off") },
-						{ v: "soft", l: t("sp.glowStyle.soft") },
-						{ v: "halo", l: t("sp.glowStyle.halo") },
-					],
-					settings.ballGlowStyle,
-					(v) => {
-						onChange({ ballGlowStyle: v as BallGlowStyle });
-						renderPage();
-					},
-				),
-			),
-		);
-		if (settings.ballGlowStyle !== "off") {
-			root.append(pathSlider(t("sp.glowRange"), "ballGlowRange", 0, 2, 0.05));
-		}
-		root.append(
-			subhead(t("sp.emission")),
-			pathSlider(t("sp.ballBright"), "brightBall", 0, 1, 0.01),
-			pathSlider(t("sp.ballGlow"), "glowBall", 0, 1, 0.01),
+	/** bloom 全屏后处理控件（小球页与点亮页共用，确保两处调同一组字段、显示同步）：
+	 *  强度 / 自动阈值 / 亮度阈值 / 光晕半径 + 说明。阈值在 auto 时禁用但显示当前自动值。 */
+	function bloomControls(): HTMLElement[] {
+		const out: HTMLElement[] = [];
+		out.push(
 			row(
 				t("sp.bloomStrength"),
 				slider(0, 3, 0.05, settings.bloomStrength, (v) =>
@@ -1759,31 +1793,75 @@ export function createSettingsPanel(
 				}),
 			),
 		);
-		{
-			const thr = slider(0, 1, 0.01, settings.bloomThreshold, (v) => {
-				// 手动拖阈值 = 用户明确接管：自动模式当场关掉，否则下一次 applySurf
-				// 又把它改回去，滑杆看起来像「拖了没反应」
-				onChange({ bloomThreshold: v, bloomAutoThreshold: false });
-				renderPage();
-			});
-			bloomThrCtl = thr;
-			if (settings.bloomAutoThreshold) {
-				thr.range.disabled = true;
-				thr.num.disabled = true;
-				thr.num.title = t("sp.bloomAutoHint");
-			}
-			root.append(row(t("sp.bloomThreshold"), thr));
+		const thr = slider(0, 1, 0.01, settings.bloomThreshold, (v) => {
+			// 手动拖阈值 = 用户明确接管：自动模式当场关掉，否则下一次 applySurf
+			// 又把它改回去，滑杆看起来像「拖了没反应」
+			onChange({ bloomThreshold: v, bloomAutoThreshold: false });
+			renderPage();
+		});
+		bloomThrCtl = thr;
+		if (settings.bloomAutoThreshold) {
+			// 禁用但正常显示数值位置：自动值由 syncBloomThreshold 算出后
+			// 通过 syncDerived 回填到这里，滑块位置反映真实生效阈值
+			thr.range.disabled = true;
+			thr.num.disabled = true;
+			thr.num.title = t("sp.bloomAutoHint");
 		}
-		{
-			// 上限收到 1：three 的 bloomRadius 是 5 级模糊权重的插值系数，
-			// 文档口径 [0,1]；超过 1 会把最紧那级的权重拖成负数（抵消而非更大）
-			const rad = slider(0, 1, 0.05, settings.bloomRadius, (v) =>
-				onChange({ bloomRadius: v }),
-			);
-			bloomRadCtl = rad;
-			root.append(row(t("sp.bloomRadius"), rad));
+		out.push(row(t("sp.bloomThreshold"), thr));
+		// 上限收到 1：three 的 bloomRadius 是 5 级模糊权重的插值系数，
+		// 文档口径 [0,1]；超过 1 会把最紧那级的权重拖成负数（抵消而非更大）
+		const rad = slider(0, 1, 0.05, settings.bloomRadius, (v) =>
+			onChange({ bloomRadius: v }),
+		);
+		bloomRadCtl = rad;
+		out.push(row(t("sp.bloomRadius"), rad));
+		out.push(note(t("sp.bloomNote")));
+		return out;
+	}
+	function renderBall(root: HTMLElement): void {
+		// ── 顶部全局区（路径栏上方）：bloom 是全屏后处理，天生无法逐路径，始终可调 ──
+		root.append(subhead(t("sp.global")), ...bloomControls());
+		// 顶部路径多选按钮栏（全选默认开，可横向滚动）
+		const bar = pathBar();
+		if (bar) root.append(bar);
+		// ── 分轨区：以下都支持逐路径独立调节；全选时一起调 = 全局生效 ──
+		root.append(
+			subhead(t("sp.material")),
+			pathColorRow(),
+			pathSelect(t("sp.material"), "ballPreset", [
+				{ v: "flat", l: t("sp.preset.flat") },
+				{ v: "metal", l: t("sp.preset.metal") },
+				{ v: "glass", l: t("sp.preset.glass") },
+				{ v: "paper", l: t("sp.preset.paper") },
+				{ v: "wood", l: t("sp.preset.wood") },
+				{ v: "tile", l: t("sp.preset.tile") },
+			]),
+			pathSlider(t("sp.rough"), "ballRough", 0, 1, 0.01),
+			pathSlider(t("sp.metal"), "ballMetal", 0, 1, 0.01),
+		);
+		root.append(
+			subhead(t("sp.size")),
+			pathSlider(t("sp.ballSize"), "ballSize", 0.1, 2, 0.01),
+			pathCheckbox(t("sp.hitFx"), "hitFx"),
+		);
+		root.append(
+			subhead(t("sp.trailGlow")),
+			pathSlider(t("sp.trailLen"), "trailPct", 0, 200, 5),
+			pathSelect(t("sp.glowStyle"), "ballGlowStyle", [
+				{ v: "off", l: t("sp.glowStyle.off") },
+				{ v: "soft", l: t("sp.glowStyle.soft") },
+				{ v: "halo", l: t("sp.glowStyle.halo") },
+			]),
+		);
+		// 作用域内任意路径光晕样式 ≠ off 才显示范围滑杆
+		if (scopeStrs("ballGlowStyle").some((s) => s !== "off")) {
+			root.append(pathSlider(t("sp.glowRange"), "ballGlowRange", 0, 2, 0.05));
 		}
-		root.append(note(t("sp.bloomNote")));
+		root.append(
+			subhead(t("sp.emission")),
+			pathSlider(t("sp.ballBright"), "brightBall", 0, 1, 0.01),
+			pathSlider(t("sp.ballGlow"), "glowBall", 0, 1, 0.01),
+		);
 		// 小球光源：独立于「自发光」。自发光只让球自身发亮（bloom），
 		// 点光源才是真正照亮周围谱面的灯——每条路径一盏，互不干扰。
 		root.append(
@@ -1840,10 +1918,10 @@ export function createSettingsPanel(
 	}
 
 	function renderLit(root: HTMLElement): void {
-		const bar = pathBar();
-		if (bar) root.append(bar);
-		// 跟随小球 = 总开关：开着时点亮整套沿用小球的色/亮度/光效，下面的设置项全部隐藏
+		// ── 顶部全局区（路径栏上方）：都是天生无法逐路径的全局项，始终可调 ──
 		root.append(
+			subhead(t("sp.global")),
+			// 跟随小球 = 总开关：开着时点亮整套沿用小球的色/亮度/光效，分轨区隐藏
 			row(
 				t("sp.followBall"),
 				checkbox(settings.litFollowBall, (c) => {
@@ -1851,11 +1929,34 @@ export function createSettingsPanel(
 					renderPage();
 				}),
 			),
+			subhead(t("sp.litSubToggles")),
+			// ── 元素点亮三档：连音线 / 圆滑线 / 指法 / 和弦标记 / 歌词 ──
+			// 只控制点亮发光，不控制元素是否显示（显示与否在乐谱页管理）。跟随小球与否都显示。
+			...(() => {
+				const items = (): { v: string; l: string }[] => [
+					{ v: "off", l: t("sp.litModeOff") },
+					{ v: "stream", l: t("sp.litModeStream") },
+					{ v: "block", l: t("sp.litModeBlock") },
+				];
+				return [
+					row(t("sp.litTie"), selectOf(items(), settings.litTie, (v) => onChange({ litTie: v as LitMode }))),
+					row(t("sp.litSlur"), selectOf(items(), settings.litSlur, (v) => onChange({ litSlur: v as LitMode }))),
+					row(t("sp.litFingering"), selectOf(items(), settings.litFingering, (v) => onChange({ litFingering: v as LitMode }))),
+					row(t("sp.litChordMark"), selectOf(items(), settings.litChordMark, (v) => onChange({ litChordMark: v as LitMode }))),
+					row(t("sp.litLyric"), selectOf(items(), settings.litLyric, (v) => onChange({ litLyric: v as LitMode }))),
+				];
+			})(),
+			...bloomControls(),
 		);
+		// 顶部路径多选按钮栏
+		const bar = pathBar();
+		if (bar) root.append(bar);
+		// 跟随小球开着 → 点亮整套沿用小球的色/亮度/光效，分轨区隐藏
 		if (settings.litFollowBall) {
 			root.append(note(t("sp.litFollowNote")));
 			return;
 		}
+		// ── 分轨区：点亮色 / 亮度 / 光晕，逐路径可调 ──
 		root.append(
 			colorRow(t("sp.litColorScoped", { scope: scopeLabel() }), {
 				value: settings.litColor,
@@ -1867,12 +1968,6 @@ export function createSettingsPanel(
 			subhead(t("sp.glow")),
 			pathSlider(t("sp.litBright"), "brightLit", 0, 1, 0.01),
 			pathSlider(t("sp.litGlow"), "glowLit", 0, 1, 0.01),
-			row(
-				t("sp.bloomThreshold"),
-				slider(0, 1, 0.01, settings.bloomThreshold, (v) =>
-					onChange({ bloomThreshold: v }),
-				),
-			),
 		);
 	}
 

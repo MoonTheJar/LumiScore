@@ -20,6 +20,13 @@ export const BLOOM_LAYER = 1;
 /** 光效权重 → 发光缓冲里的 HDR 倍率增益 */
 const GLOW_GAIN = 3;
 
+/** 发光缓冲的明度口径（与 UnrealBloom 高通 / peakLuma 一致：Rec.601 luma）。
+ *  红/暖色 luma≈0.3、纯蓝 luma≈0.11——同一光效下两者亮度差近 3 倍，高阈值时
+ *  暖色过阈值出光晕、冷色被滤掉，这就是左右手光晕不一致的根因。 */
+function bloomLuma(c: THREE.Color | undefined): number {
+	return c ? 0.299 * c.r + 0.587 * c.g + 0.114 * c.b : 0;
+}
+
 export type GlowSource = "ball" | "lit" | "ground";
 
 /** 一条要进发光缓冲的材质 + 它自己的光效权重。
@@ -141,9 +148,14 @@ export function createSelectiveBloom(opts: {
 					if (mat.emissiveIntensity !== undefined) mat.emissiveIntensity = 0;
 					continue;
 				}
-				mat.color?.copy(shot.color).multiplyScalar(f);
+				// 颜色明度归一化：发光缓冲里的亮度只由光效 f 决定，与色相无关。
+				// 只缩放量、不改 RGB 比例 → 色相保留（光晕仍是各自颜色），但各色亮度一致。
+				// 修复左右手（路径色不同）同一光效下光晕强弱不一致：暖色过阈值、冷色被滤掉。
+				const normColor = 1 / Math.max(bloomLuma(shot.color), 1e-4);
+				mat.color?.copy(shot.color).multiplyScalar(f * normColor);
 				if (mat.emissive && shot.emissive) {
-					mat.emissive.copy(shot.emissive);
+					const normEm = 1 / Math.max(bloomLuma(shot.emissive), 1e-4);
+					mat.emissive.copy(shot.emissive).multiplyScalar(normEm);
 					mat.emissiveIntensity = shot.emissiveIntensity * f;
 				}
 			}
@@ -207,15 +219,9 @@ export function createSelectiveBloom(opts: {
 					if (g.w <= 0) continue; // 光效 0 会被置黑，根本不进缓冲
 					const f = 1 + g.w * GLOW_GAIN;
 					const m = g.mat as MaybeEmissive;
-					const lum = (c: THREE.Color | undefined): number =>
-						c ? (0.299 * c.r + 0.587 * c.g + 0.114 * c.b) * f : 0;
-					peak = Math.max(
-						peak,
-						lum(m.color),
-						m.emissive
-							? lum(m.emissive) * (m.emissiveIntensity ?? 1)
-							: 0,
-					);
+					// 与 boostBloomColors 同口径：颜色已按 luma 归一化，
+					// color 贡献恒为 f、emissive 贡献恒为 ei×f，与色相无关。
+					peak = Math.max(peak, f, (m.emissiveIntensity ?? 0) * f);
 				}
 			}
 			// 天空：背景色被当光源加回时的亮度

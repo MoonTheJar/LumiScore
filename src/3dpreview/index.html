@@ -220,6 +220,25 @@
     .aspect-bulb:focus-visible { outline: 2px solid var(--sh-accent); outline-offset: 1px; }
     .aspect-bulb.is-on { color: #f5c518; }
 
+    /* ── 相机对中辅助层：拖「居中偏移」滑轨时显示，纯视觉不拦截事件 ──
+       与画面比例层同一内缩可视区；只画一条居中十字作参考 */
+    .center-guide-overlay {
+      position: fixed;
+      inset: var(--sh-canvas-top, 54px) calc(var(--sh-side-inset, 0px) + var(--sh-dock-right, 0px)) 0 var(--sh-dock-left, 0px);
+      pointer-events: none;
+      z-index: 41;
+    }
+    /* 居中十字：一横一竖，交叉于画布可视区中心 */
+    .cg-cross { position: absolute; }
+    .cg-cross-v {
+      top: 0; bottom: 0; left: 50%; width: 0;
+      border-left: 1px dashed color-mix(in srgb, var(--sh-accent) 60%, transparent);
+    }
+    .cg-cross-h {
+      left: 0; right: 0; top: 50%; height: 0;
+      border-top: 1px dashed color-mix(in srgb, var(--sh-accent) 60%, transparent);
+    }
+
     /* ── 相机面板（收纳在「相机 ▾」里，故默认不显示） ── */
     #camPanel { display: grid; gap: 6px; padding: 4px; }
     .cam-row {
@@ -884,7 +903,13 @@
       padding: 2px 0 4px;
     }
     .sp-pathbar {
-      display: flex; gap: 6px; overflow-x: auto; padding: 4px 0 8px;
+      display: flex; gap: 6px; align-items: center; padding: 4px 0 8px;
+    }
+    .sp-pathbtn--all {
+      flex: 0 0 auto;
+    }
+    .sp-pathbar__scroll {
+      display: flex; gap: 6px; overflow-x: auto; flex: 1 1 auto; min-width: 0;
       scrollbar-width: thin;
     }
     .sp-pathbtn {
