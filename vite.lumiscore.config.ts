@@ -32,8 +32,12 @@ const flowMirror = (root: string): Plugin => ({
     const out = join(root, 'lumiscore')
     // 五页首帧都请求包根的 ../../shell-theme.css；publicDir 指向 deploy/public，
     // 所以这里单独把令牌副本补到发布包根，避免首帧 404 与样式闪动。
+    // 注意：CI 全新检出时 outDir 可能尚未生成，写入前必须先建目录。
     const theme = join(root, 'public', 'shell-theme.css')
-    if (existsSync(theme)) writeFileSync(join(out, 'shell-theme.css'), readFileSync(theme))
+    if (existsSync(theme)) {
+      mkdirSync(out, { recursive: true })
+      writeFileSync(join(out, 'shell-theme.css'), readFileSync(theme))
+    }
     // 镜像前缀 .lumiscore-entry/ 去掉：lumiscore/.lumiscore-entry/pages → lumiscore/pages。
     // 镜像深度与最终深度都是两级（pages/<step>），Vite 注入的 ../../assets 引用无需改写。
     const staged = join(out, MIRROR, 'pages')

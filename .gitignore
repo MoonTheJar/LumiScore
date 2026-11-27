@@ -60,8 +60,11 @@ coverage/
 
 # generated build output & deploy bundles (regenerate via `npm run build:lumiscore`)
 lumiscore/
-deploy/
 /assets/
+# deploy/ 是构建中间目录，但根入口 deploy/index.html 是唯一的外壳源码，必须入库
+/deploy/*
+!/deploy/index.html
+# root shell source is required by the build (src/router/main.ts)
 
 # dev test bench / harness — NOT part of the shipped app
 shell-test/
