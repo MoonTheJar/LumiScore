@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:lumiscore": "npm run gen:samples && node scripts/sync-deploy-public.mjs && vite build --config vite.lumiscore.config.ts",
+    "build:pages": "node scripts/sync-deploy-public.mjs && vite build --config vite.lumiscore.config.ts",
     "gen:samples": "npx esbuild scripts/gen-sample-data.ts --bundle --platform=node --format=esm --outfile=.tmp-gen-samples.mjs --log-level=warning && node .tmp-gen-samples.mjs",
     "postbuild": "node scripts/build-content.mjs && node scripts/build-og.mjs && node scripts/stamp-sitemap.mjs && node scripts/check-links.mjs && node scripts/upload-sourcemaps.mjs",
     "preview": "vite preview",
