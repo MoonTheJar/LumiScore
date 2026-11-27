@@ -43,8 +43,8 @@ LumiScore turns MIDI / MusicXML scores into an interactive 3D scene in the brows
 
 ## 在线体验
 
-- bilibili TOY：https://www.bilibili.com/toy/lumiscore/
-- GitHub Pages：https://moonthjar.github.io/LumiScore/
+- bilibili TOY：https://www.bilibili.com/toy/lumiscore/index.html
+- GitHub Pages：https://moonthejar.github.io/LumiScore/
 
 ## 本地运行
 
